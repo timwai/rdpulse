@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"sort"
 	"sync"
@@ -92,6 +93,13 @@ func dialTCPAuth(
 		return nil, errors.New("no tcp candidates available for punching")
 	}
 
+	roleName := "打洞"
+	if role == tcpRoleProbe {
+		roleName = "探测"
+	}
+	started := time.Now()
+	log.Printf("[Punch] TCP %s开始 Session=%d 超时=%s 候选=%s", roleName, sessionID, timeout, protocol.FormatCandidates(tcpCandidates))
+
 	resultCh := make(chan net.Conn, 1)
 	var once sync.Once
 	var pendingMu sync.Mutex
@@ -146,9 +154,11 @@ func dialTCPAuth(
 	select {
 	case conn := <-resultCh:
 		closePending(conn)
+		log.Printf("[Punch] TCP %s成功 Session=%d 对端=%s 耗时=%s", roleName, sessionID, conn.RemoteAddr(), time.Since(started).Round(time.Millisecond))
 		return conn, nil
 	case <-punchCtx.Done():
 		closePending(nil)
+		log.Printf("[Punch] TCP %s超时 Session=%d 候选=%d 耗时=%s", roleName, sessionID, len(tcpCandidates), time.Since(started).Round(time.Millisecond))
 		return nil, ErrTCPPunchTimeout
 	}
 }

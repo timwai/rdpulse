@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -320,6 +321,7 @@ func (s *Server) handleInvitations(w http.ResponseWriter, r *http.Request) {
 			DeviceID      string `json:"deviceId"`
 			Token         string `json:"token"`
 			ExpiresInDays int    `json:"expiresInDays"`
+			ExpiresAt     string `json:"expiresAt"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
@@ -330,10 +332,11 @@ func (s *Server) handleInvitations(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"deviceId is required and must contain only alphanumeric, dash, dot, or underscore (max 64 chars)"}`, http.StatusBadRequest)
 			return
 		}
-		if req.ExpiresInDays <= 0 {
-			req.ExpiresInDays = 30
+		expiresAt, err := resolveInvitationExpiry(req.ExpiresAt, req.ExpiresInDays)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+			return
 		}
-		expiresAt := time.Now().Add(time.Duration(req.ExpiresInDays) * 24 * time.Hour)
 
 		token := strings.TrimSpace(req.Token)
 		if len(token) < 32 {
@@ -446,6 +449,56 @@ func (s *Server) handleInvitationAction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if r.Method == http.MethodPatch {
+		var req struct {
+			ExpiresAt     string `json:"expiresAt"`
+			ExpiresInDays int    `json:"expiresInDays"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(req.ExpiresAt) == "" && req.ExpiresInDays <= 0 {
+			http.Error(w, `{"error":"expiresAt or expiresInDays is required"}`, http.StatusBadRequest)
+			return
+		}
+		expiresAt, err := resolveInvitationExpiry(req.ExpiresAt, req.ExpiresInDays)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		if s.db != nil {
+			if err := s.db.UpdateEnrollmentInvitationExpiry(deviceID, expiresAt); err != nil {
+				if errors.Is(err, storage.ErrInvitationNotFound) {
+					http.Error(w, `{"error":"invitation not found"}`, http.StatusNotFound)
+					return
+				}
+				http.Error(w, fmt.Sprintf(`{"error":"update invitation failed: %v"}`, err), http.StatusInternalServerError)
+				return
+			}
+		}
+		s.cfgMu.Lock()
+		for i, inv := range s.cfg.Security.EnrollmentInvitations {
+			if inv.DeviceID == deviceID {
+				s.cfg.Security.EnrollmentInvitations[i].ExpiresAt = expiresAt
+				break
+			}
+		}
+		invsCopy := make([]config.EnrollmentInvitation, len(s.cfg.Security.EnrollmentInvitations))
+		copy(invsCopy, s.cfg.Security.EnrollmentInvitations)
+		s.cfgMu.Unlock()
+		if s.configPath != "" {
+			if err := config.SyncInvitationsToConfigFile(s.configPath, invsCopy); err != nil {
+				log.Printf("[RDPulse Web] Warning: failed to sync invitation expiry to config file %s: %v", s.configPath, err)
+			}
+		}
+		writeJSON(w, map[string]string{
+			"status":    "updated",
+			"expiresAt": expiresAt.Format("2006-01-02 15:04:05"),
+		})
+		return
+	}
+
 	http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
 }
 
@@ -522,12 +575,16 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == http.MethodPost {
 		var req struct {
-			RawYaml        string  `json:"rawYaml,omitempty"`
-			PublicHost     *string `json:"publicHost,omitempty"`
-			PortRangeStart *int    `json:"portRangeStart,omitempty"`
-			PortRangeEnd   *int    `json:"portRangeEnd,omitempty"`
-			DefaultPolicy  *string `json:"defaultPolicy,omitempty"`
-			WebToken       *string `json:"webToken,omitempty"`
+			RawYaml          string  `json:"rawYaml,omitempty"`
+			PublicHost       *string `json:"publicHost,omitempty"`
+			PortRangeStart   *int    `json:"portRangeStart,omitempty"`
+			PortRangeEnd     *int    `json:"portRangeEnd,omitempty"`
+			DefaultPolicy    *string `json:"defaultPolicy,omitempty"`
+			WebToken         *string `json:"webToken,omitempty"`
+			QuicListen       *string `json:"quicListen,omitempty"`
+			TlsListen        *string `json:"tlsListen,omitempty"`
+			TlsDisabled      *bool   `json:"tlsDisabled,omitempty"`
+			RendezvousListen *string `json:"rendezvousListen,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
@@ -562,11 +619,15 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 		// Structured settings update
 		settings := config.ServerSettingsUpdate{
-			PublicHost:     req.PublicHost,
-			PortRangeStart: req.PortRangeStart,
-			PortRangeEnd:   req.PortRangeEnd,
-			DefaultPolicy:  req.DefaultPolicy,
-			WebToken:       req.WebToken,
+			PublicHost:       req.PublicHost,
+			PortRangeStart:   req.PortRangeStart,
+			PortRangeEnd:     req.PortRangeEnd,
+			DefaultPolicy:    req.DefaultPolicy,
+			WebToken:         req.WebToken,
+			QuicListen:       req.QuicListen,
+			TlsListen:        req.TlsListen,
+			TlsDisabled:      req.TlsDisabled,
+			RendezvousListen: req.RendezvousListen,
 		}
 
 		s.cfgMu.Lock()
@@ -584,6 +645,18 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.WebToken != nil {
 			s.cfg.Web.Token = *req.WebToken
+		}
+		if req.QuicListen != nil {
+			s.cfg.Server.QUIC.Listen = strings.TrimSpace(*req.QuicListen)
+		}
+		if req.TlsListen != nil {
+			s.cfg.Server.TLS.Listen = strings.TrimSpace(*req.TlsListen)
+		}
+		if req.TlsDisabled != nil {
+			s.cfg.Server.TLS.Disabled = *req.TlsDisabled
+		}
+		if req.RendezvousListen != nil {
+			s.cfg.Server.Rendezvous.Listen = strings.TrimSpace(*req.RendezvousListen)
 		}
 		s.cfgMu.Unlock()
 
@@ -636,6 +709,44 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+func resolveInvitationExpiry(expiresAt string, expiresInDays int) (time.Time, error) {
+	if strings.TrimSpace(expiresAt) != "" {
+		t, err := parseExpiresAt(expiresAt)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if !t.After(time.Now()) {
+			return time.Time{}, fmt.Errorf("expiresAt must be in the future")
+		}
+		return t, nil
+	}
+	if expiresInDays <= 0 {
+		expiresInDays = 30
+	}
+	return time.Now().Add(time.Duration(expiresInDays) * 24 * time.Hour), nil
+}
+
+func parseExpiresAt(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	layouts := []string{
+		time.RFC3339,
+		"2006-01-02T15:04:05Z07:00",
+		"2006-01-02T15:04:05",
+		"2006-01-02T15:04",
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, value); err == nil {
+			return t, nil
+		}
+		if t, err := time.ParseInLocation(layout, value, time.Local); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid expiresAt")
 }
 
 func extractPort(addr, fallback string) string {

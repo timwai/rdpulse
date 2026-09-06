@@ -2,14 +2,41 @@ package gui
 
 import (
 	"encoding/json"
+	"errors"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"rdpulse/internal/config"
 	"gopkg.in/yaml.v3"
 )
+
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) {
+	return 0, errors.New("stderr handle is invalid")
+}
+
+func TestGUILogOutputSurvivesStderrFailure(t *testing.T) {
+	app := &App{}
+	old := log.Writer()
+	log.SetOutput(newGUILogOutput(app, failWriter{}))
+	t.Cleanup(func() { log.SetOutput(old) })
+
+	log.Print("[Test] Hello from broken stderr")
+
+	app.logMu.Lock()
+	defer app.logMu.Unlock()
+	if len(app.logHistory) != 1 {
+		t.Fatalf("expected UI to receive log when stderr write fails, got %d entries", len(app.logHistory))
+	}
+	if !strings.Contains(app.logHistory[0], "[Test] Hello from broken stderr") {
+		t.Fatalf("unexpected log entry: %s", app.logHistory[0])
+	}
+}
 
 func TestAppLogWriterAndHistory(t *testing.T) {
 	app := &App{}

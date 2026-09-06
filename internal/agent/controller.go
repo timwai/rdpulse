@@ -21,12 +21,13 @@ func (c *Client) ConnectTarget(ctx context.Context, targetDeviceID, localProxyAd
 		localProxyAddr = "127.0.0.1:13389"
 	}
 
-	log.Printf("[Controller] Connecting to Signaling/Relay server at %s...", c.cfg.Server.Address)
+	log.Printf("[Controller] 开始连接目标 %s (本机代理 %s, 禁用P2P=%v)", targetDeviceID, localProxyAddr, c.cfg.Transport.DisableP2P)
+	log.Printf("[Controller] 正在连接信令/中继 %s ...", c.cfg.Server.Address)
 	tr, transportName, err := c.dialRelayTransport(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("dial relay failed: %w", err)
 	}
-	log.Printf("[Controller] Connected using %s transport", transportName)
+	log.Printf("[Controller] 已连上中继，传输方式: %s", transportName)
 
 	// 1. Open Control Stream
 	controlStream, err := tr.OpenStream(ctx)
@@ -51,7 +52,9 @@ func (c *Client) ConnectTarget(ctx context.Context, targetDeviceID, localProxyAd
 	tuneUDPSocketBuffers(udpPunchConn)
 	p2pUDPPort := udpPunchConn.LocalAddr().(*net.UDPAddr).Port
 
+	log.Printf("[Controller] 本机打洞 UDP 端口: %d", p2pUDPPort)
 	localCandidates := c.discoverP2PCandidates(ctx, udpPunchConn, p2pUDPPort, 0)
+	log.Printf("[Controller] 本机候选地址 (%d): %s", len(localCandidates), protocol.FormatCandidates(localCandidates))
 
 	// 4. Send CONNECT_REQUEST
 	connReq := &protocol.ControlMessage{
@@ -66,7 +69,7 @@ func (c *Client) ConnectTarget(ctx context.Context, targetDeviceID, localProxyAd
 		return nil, nil, fmt.Errorf("send connect request failed: %w", err)
 	}
 
-	log.Printf("[Controller] Sent connection request to target %s, awaiting candidates...", targetDeviceID)
+	log.Printf("[Controller] 已向目标 %s 发送连接请求，等待对方候选地址...", targetDeviceID)
 
 	// 5. Read CONNECT_RESPONSE
 	connResp, err := protocol.ReadControlMessage(controlStream)
@@ -88,7 +91,8 @@ func (c *Client) ConnectTarget(ctx context.Context, targetDeviceID, localProxyAd
 		return nil, nil, fmt.Errorf("unexpected response type: %s", connResp.Type)
 	}
 
-	log.Printf("[Controller] Received target candidates (%d candidates), SessionID=%d", len(connResp.Candidates), connResp.SessionID)
+	log.Printf("[Controller] 收到目标候选 (%d 个), SessionID=%d, 中继入口=%s:%d", len(connResp.Candidates), connResp.SessionID, connResp.PublicHost, connResp.PublicPort)
+	log.Printf("[Controller] 目标候选地址: %s", protocol.FormatCandidates(connResp.Candidates))
 
 	// 6. Initialize PathManager and launch Happy-Eyeballs parallel competition
 	sessionID := uint64(connResp.SessionID)
@@ -98,8 +102,9 @@ func (c *Client) ConnectTarget(ctx context.Context, targetDeviceID, localProxyAd
 	pathMgr := path.NewManager(ctx, connResp.SessionID, sessionToken, tr)
 	pathMgr.SetRelayEndpoints(relayTargetAddr, relayTargetAddr)
 
+	log.Printf("[Controller] 启动路径竞速 (Happy-Eyeballs): UDP打洞 2.5s, 300ms 后预热中继")
 	path.ParallelRace(ctx, udpPunchConn, connResp.Candidates, sessionID, sessionToken, func() error {
-		log.Println("[Controller] Parallel race triggered Relay fallback")
+		log.Println("[Controller] 300ms 内直连未确认，已预热中继路径")
 		return nil
 	}, pathMgr)
 
@@ -120,7 +125,7 @@ func (c *Client) ConnectTarget(ctx context.Context, targetDeviceID, localProxyAd
 	if autoLaunchMstsc && runtime.GOOS == "windows" {
 		go func() {
 			time.Sleep(500 * time.Millisecond)
-			log.Printf("[Controller] Launching mstsc.exe /v:%s ...", localProxyAddr)
+			log.Printf("[Controller] 正在启动 mstsc.exe /v:%s ...", localProxyAddr)
 			cmd := exec.Command("mstsc.exe", fmt.Sprintf("/v:%s", localProxyAddr))
 			_ = cmd.Start()
 		}()
@@ -140,8 +145,10 @@ func (c *Client) controllerControlLoop(ctx context.Context, stream transport.Str
 		}
 		switch msg.Type {
 		case protocol.MsgTypeCandidateExchange:
+			log.Printf("[Controller] 收到补充候选: %s", protocol.FormatCandidates(msg.Candidates))
 			pathMgr.AddCandidates(msg.Candidates)
 		case protocol.MsgTypeSessionClose:
+			log.Printf("[Controller] 对端关闭会话 SessionID=%d", sessionID)
 			_ = pathMgr.Close()
 			return
 		}

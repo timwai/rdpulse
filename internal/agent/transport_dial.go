@@ -42,7 +42,7 @@ func (c *Client) dialRelayTransport(ctx context.Context) (transport.Transport, s
 	if tlsAddress == "" {
 		tlsAddress = c.cfg.Server.Address
 	}
-	log.Printf("[Agent] QUIC unavailable (%v); trying TLS/TCP fallback at %s", quicErr, tlsAddress)
+	log.Printf("[Agent] QUIC 不可用 (%v)，改走 TLS/TCP 备用通道 %s", quicErr, tlsAddress)
 	tlsTransport, tlsErr := tlsmux.Dial(ctx, tlsAddress, tlsConfig)
 	if tlsErr != nil {
 		return nil, "", errors.Join(fmt.Errorf("dial QUIC: %w", quicErr), fmt.Errorf("dial TLS/TCP: %w", tlsErr))

@@ -67,6 +67,21 @@ func TestManagementMethods(t *testing.T) {
 	if err != nil || len(invs) != 1 || invs[0].DeviceID != "device-mgmt" {
 		t.Fatalf("expected 1 invitation, got %v, err=%v", invs, err)
 	}
+	later := now.Add(48 * time.Hour)
+	if err := db.UpdateEnrollmentInvitationExpiry("device-mgmt", later); err != nil {
+		t.Fatal(err)
+	}
+	invs, err = db.ListEnrollmentInvitations()
+	if err != nil || len(invs) != 1 {
+		t.Fatalf("list after expiry update: %v err=%v", invs, err)
+	}
+	if !invs[0].ExpiresAt.Equal(later.UTC()) && invs[0].ExpiresAt.Sub(later.UTC()).Abs() > time.Second {
+		t.Fatalf("expires_at not updated: got %v want %v", invs[0].ExpiresAt, later.UTC())
+	}
+	if err := db.UpdateEnrollmentInvitationExpiry("missing-device", later); !errors.Is(err, ErrInvitationNotFound) {
+		t.Fatalf("missing invitation error=%v", err)
+	}
+
 	if err := db.DeleteEnrollmentInvitation("device-mgmt"); err != nil {
 		t.Fatal(err)
 	}

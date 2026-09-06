@@ -175,7 +175,7 @@ func (m *Manager) SetDirectUDP(res *punch.PunchResult, isLAN bool) {
 	}
 	res.StartKeepalive(m.ctx, 15*time.Second)
 	m.notifyPathChanged()
-	log.Printf("[PathManager] UDP Path upgraded to: %s (%s)", PathType(m.udpPath.Load()), res.RemoteAddr)
+	log.Printf("[Path] UDP 升级为 %s，对端 %s", PathType(m.udpPath.Load()), res.RemoteAddr)
 }
 
 // SetDirectTCP marks TCP as an authenticated direct path after a successful punch/probe.
@@ -189,7 +189,7 @@ func (m *Manager) SetDirectTCP(isLAN bool) {
 		m.tcpPath.Store(uint32(PathDirectTCP))
 	}
 	m.notifyPathChanged()
-	log.Printf("[PathManager] TCP Path upgraded to: %s", PathType(m.tcpPath.Load()))
+	log.Printf("[Path] TCP 升级为 %s", PathType(m.tcpPath.Load()))
 }
 
 // FallbackUDPFromDirect drops a dead P2P UDP path and returns to Relay or Disabled.
@@ -211,7 +211,7 @@ func (m *Manager) FallbackUDPFromDirect() {
 		m.udpPath.Store(uint32(PathDisabled))
 	}
 	m.notifyPathChanged()
-	log.Printf("[PathManager] UDP Path fell back to: %s", PathType(m.udpPath.Load()))
+	log.Printf("[Path] UDP 回退为 %s", PathType(m.udpPath.Load()))
 }
 
 // AddCandidates updates direct path endpoints and wakes an in-progress UDP
@@ -257,7 +257,7 @@ func (m *Manager) SetQUICRelay() {
 		}
 	}
 	m.notifyPathChanged()
-	log.Printf("[PathManager] Fallback active: TCP=%s, UDP=%s", PathType(m.tcpPath.Load()), PathType(m.udpPath.Load()))
+	log.Printf("[Path] 中继已预热: TCP=%s, UDP=%s", PathType(m.tcpPath.Load()), PathType(m.udpPath.Load()))
 }
 
 // TCPPath returns current active TCP path
@@ -487,6 +487,7 @@ func ParallelRace(
 ) {
 	raceCtx, raceCancel := context.WithCancel(pathMgr.ctx)
 	pathMgr.AddCandidates(candidates)
+	log.Printf("[Path] 路径竞速开始 Session=%d 候选=%s", sessionID, protocol.FormatCandidates(candidates))
 
 	// T = 0ms: Start UDP P2P punch
 	go func() {
@@ -494,15 +495,25 @@ func ParallelRace(
 		res, err := punch.PunchUDPWithUpdates(raceCtx, localUDPConn, candidates, pathMgr.candidateUpdates, sessionID, sessionToken, 2500*time.Millisecond)
 		if err == nil && res != nil {
 			isLAN := isCandidateLAN(res.RemoteAddr, candidates)
+			log.Printf("[Path] UDP 竞速成功 对端=%s LAN=%v", res.RemoteAddr, isLAN)
 			pathMgr.SetDirectUDP(res, isLAN)
-		} else if localUDPConn != nil {
-			_ = localUDPConn.Close()
+		} else {
+			if err != nil {
+				log.Printf("[Path] UDP 竞速未成功: %v", err)
+			}
+			if localUDPConn != nil {
+				_ = localUDPConn.Close()
+			}
 		}
 	}()
 
 	go func() {
 		if err := punch.ProbeTCP(pathMgr.ctx, candidates, sessionID, sessionToken, 2500*time.Millisecond); err == nil {
-			pathMgr.SetDirectTCP(tcpCandidatesAreLAN(candidates))
+			isLAN := tcpCandidatesAreLAN(candidates)
+			log.Printf("[Path] TCP 探测成功 LAN=%v", isLAN)
+			pathMgr.SetDirectTCP(isLAN)
+		} else {
+			log.Printf("[Path] TCP 探测未成功: %v", err)
 		}
 	}()
 
@@ -524,9 +535,15 @@ func ParallelRace(
 }
 
 func isCandidateLAN(addr netip.AddrPort, candidates []protocol.CandidateInfo) bool {
-	addrStr := addr.String()
 	for _, c := range candidates {
-		if c.Type == "lan" && c.Address == addrStr {
+		if c.Type != "lan" {
+			continue
+		}
+		parsed, err := netip.ParseAddrPort(c.Address)
+		if err != nil {
+			continue
+		}
+		if sameAddrPort(addr, parsed) {
 			return true
 		}
 	}

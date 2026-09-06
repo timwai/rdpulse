@@ -187,3 +187,17 @@ func TestP2PDataAuthentication(t *testing.T) {
 		t.Fatal("expected missing P2P token to be rejected")
 	}
 }
+
+func TestFormatCandidates(t *testing.T) {
+	if got := FormatCandidates(nil); got != "无" {
+		t.Fatalf("empty = %q", got)
+	}
+	got := FormatCandidates([]CandidateInfo{
+		{Type: "lan", Protocol: "udp", Address: "192.168.1.8:40000"},
+		{Type: "reflexive", Protocol: "tcp", Address: "203.0.113.9:443"},
+	})
+	want := "lan/udp 192.168.1.8:40000, reflexive/tcp 203.0.113.9:443"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}

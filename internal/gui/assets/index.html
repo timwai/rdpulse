@@ -21,6 +21,12 @@
       overflow: hidden;
       font-size: 13px;
     }
+    #log-console,
+    #log-console * {
+      user-select: text;
+      -webkit-user-select: text;
+      cursor: text;
+    }
     .mono {
       font-family: 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
       font-variant-ligatures: none;
@@ -926,7 +932,10 @@
     /* ---------- logs ---------- */
     function logTone(line) {
       if (/error|failed|失败|rejected|invalid|fatal/i.test(line)) return 'text-rose-400';
-      if (/warn|警告|timeout/i.test(line)) return 'text-amber-300';
+      if (/warn|警告|timeout|超时/i.test(line)) return 'text-amber-300';
+      if (line.indexOf('[Auth]') >= 0) return 'text-teal-300';
+      if (line.indexOf('[Punch]') >= 0) return 'text-cyan-300';
+      if (line.indexOf('[Path]') >= 0 || line.indexOf('[PathManager]') >= 0) return 'text-violet-300';
       if (line.indexOf('[Controller]') >= 0) return 'text-sky-400';
       if (line.indexOf('[Target]') >= 0) return 'text-emerald-400';
       if (line.indexOf('[Agent]') >= 0) return 'text-indigo-300';
@@ -940,7 +949,7 @@
       if (!el) return;
 
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-      while (el.children.length > 800) el.removeChild(el.firstChild);
+      while (el.children.length > 2000) el.removeChild(el.firstChild);
 
       const div = document.createElement('div');
       div.className = 'break-all ' + logTone(line);
@@ -967,6 +976,10 @@
 
         const el = document.getElementById('log-console');
         if (!el) return;
+        if (logs.length === 0) {
+          lastLogCount = 0;
+          return;
+        }
         if (logs.length !== lastLogCount || el.children.length <= 1) {
           el.innerHTML = '';
           logs.forEach(appendLogLine);

@@ -65,7 +65,7 @@ func (c *Client) Run(ctx context.Context) error {
 		c.notifyInitialConnect(err)
 		if err != nil && !errors.Is(err, context.Canceled) {
 			delay := c.backoff.NextDelay()
-			log.Printf("[Agent] Connection lost (%v), reconnecting in %v...", err, delay)
+			log.Printf("[Agent] 连接中断 (%v)，将在 %v 后重连...", err, delay)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -103,13 +103,13 @@ func (c *Client) connectAndServe(parentCtx context.Context) error {
 	connCtx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
-	log.Printf("[Agent] Connecting to Relay at %s...", c.cfg.Server.Address)
+	log.Printf("[Agent] 正在连接中继 %s (设备 %s)...", c.cfg.Server.Address, c.cfg.Device.ID)
 	tr, transportName, err := c.dialRelayTransport(connCtx)
 	if err != nil {
 		return fmt.Errorf("dial relay failed: %w", err)
 	}
 	defer tr.Close()
-	log.Printf("[Agent] Connected using %s transport", transportName)
+	log.Printf("[Agent] 已连上中继，传输方式: %s", transportName)
 
 	// 1. Open Control Stream
 	controlStream, err := tr.OpenStream(connCtx)
@@ -143,6 +143,8 @@ func (c *Client) connectAndServe(parentCtx context.Context) error {
 
 	hostname, _ := os.Hostname()
 	localCandidates := c.discoverP2PCandidates(connCtx, punchUDPConn, p2pPort, directTCPPort)
+	log.Printf("[Agent] 本机打洞端口 UDP=%d TCP=%d", p2pPort, directTCPPort)
+	log.Printf("[Agent] 本机候选地址 (%d): %s", len(localCandidates), protocol.FormatCandidates(localCandidates))
 	dispatcher := punch.NewUDPDispatcher(punchUDPConn)
 	defer dispatcher.Close()
 	regMsg := &protocol.ControlMessage{
@@ -167,7 +169,7 @@ func (c *Client) connectAndServe(parentCtx context.Context) error {
 		return fmt.Errorf("expected PORT_ASSIGN, got: %s", assignResp.Type)
 	}
 
-	log.Printf("[Agent] Connected! RDP endpoint: %s:%d", assignResp.PublicHost, assignResp.PublicPort)
+	log.Printf("[Agent] 注册成功 主机=%s，中继为该设备分配 RDP 入口 %s:%d", hostname, assignResp.PublicHost, assignResp.PublicPort)
 	c.notifyInitialConnect(nil)
 
 	// Successfully connected, reset backoff
@@ -197,7 +199,7 @@ func (c *Client) connectAndServe(parentCtx context.Context) error {
 			errCh <- c.receiveDatagramsLoop(connCtx, tr, sessionManager, reassembler, fragmenter)
 		}()
 	} else {
-		log.Printf("[Agent] %s transport active; RDP UDP relay is disabled", transportName)
+		log.Printf("[Agent] 当前传输为 %s，已禁用 RDP UDP 中继", transportName)
 	}
 
 	// 7. Run Heartbeat loop
@@ -250,7 +252,7 @@ func (c *Client) handleIncomingStream(ctx context.Context, stream transport.Stre
 	// 1. Read TCP header from Relay
 	hdr, err := protocol.ReadTCPHeader(stream)
 	if err != nil {
-		log.Printf("[Agent] Failed to read TCP header from stream: %v", err)
+		log.Printf("[Agent] 读取中继 TCP 流头失败: %v", err)
 		return
 	}
 
@@ -266,7 +268,7 @@ func (c *Client) handleIncomingStream(ctx context.Context, stream transport.Stre
 
 	localConn, err := net.DialTimeout("tcp", targetAddr, 3*time.Second)
 	if err != nil {
-		log.Printf("[Agent] Failed to dial local RDP %s: %v", targetAddr, err)
+		log.Printf("[Agent] 连接本机 RDP %s 失败: %v", targetAddr, err)
 		_ = protocol.WriteTCPHeader(stream, &protocol.TCPHeader{
 			Version:      protocol.TCPProtocolVersion,
 			Type:         protocol.TCPTypeError,
@@ -275,6 +277,7 @@ func (c *Client) handleIncomingStream(ctx context.Context, stream transport.Stre
 		return
 	}
 	defer localConn.Close()
+	log.Printf("[Agent] 中继 TCP 已接入本机 RDP %s ConnectionID=%d", targetAddr, hdr.ConnectionID)
 
 	// 3. Respond with TCP_OPEN_OK
 	respHdr := &protocol.TCPHeader{
@@ -331,7 +334,7 @@ func (c *Client) receiveDatagramsLoop(
 			// Create dedicated local UDP socket bound to an ephemeral port
 			localConn, err := net.DialUDP("udp", nil, rdpUDPAddr)
 			if err != nil {
-				log.Printf("[Agent] Failed to create local UDP socket to RDP: %v", err)
+				log.Printf("[Agent] 创建本机 RDP UDP 套接字失败: %v", err)
 				continue
 			}
 
@@ -428,12 +431,15 @@ func (c *Client) controlMessageReader(
 
 		switch msg.Type {
 		case protocol.MsgTypeConnectNotify:
-			log.Printf("[Agent] Received connect request from Controller %s (SessionID=%d), starting P2P punch...", msg.DeviceID, msg.SessionID)
+			log.Printf("[Agent] 收到控制端 %s 的连接请求 SessionID=%d，开始 P2P 打洞", msg.DeviceID, msg.SessionID)
+			log.Printf("[Agent] 对端候选: %s", protocol.FormatCandidates(msg.Candidates))
 			session := p2pSessions.register(ctx, msg)
 			go c.handleIncomingP2PPunch(session, msg, sm, reassembler, fragmenter, dispatcher)
 		case protocol.MsgTypeCandidateExchange:
+			log.Printf("[Agent] Session %d 收到补充候选: %s", msg.SessionID, protocol.FormatCandidates(msg.Candidates))
 			_ = p2pSessions.update(msg.SessionID, msg.Candidates)
 		case protocol.MsgTypeSessionClose:
+			log.Printf("[Agent] Session %d 已被对端关闭", msg.SessionID)
 			p2pSessions.remove(msg.SessionID)
 		}
 	}
@@ -445,16 +451,19 @@ func (c *Client) discoverP2PCandidates(ctx context.Context, punchConn *net.UDPCo
 	}
 	candidates, err := nat.DiscoverLANCandidates(udpPort, tcpPort)
 	if err != nil {
-		log.Printf("[Agent] Failed to discover LAN candidates: %v", err)
+		log.Printf("[Agent] 发现局域网候选失败: %v", err)
 	}
 
 	if c.cfg.Server.RendezvousAddress != "" {
+		log.Printf("[Agent] 正在探测公网映射地址 %s ...", c.cfg.Server.RendezvousAddress)
 		candidate, err := nat.ProbeReflexiveCandidate(ctx, c.cfg.Server.RendezvousAddress, punchConn)
 		if err != nil {
-			log.Printf("[Agent] Failed to discover reflexive UDP candidate: %v", err)
+			log.Printf("[Agent] 探测公网映射地址失败: %v", err)
 		} else if candidate != nil {
 			candidates = append(candidates, *candidate)
 		}
+	} else {
+		log.Printf("[Agent] 未配置 Rendezvous 地址，跳过公网映射探测")
 	}
 	return candidates
 }
@@ -472,7 +481,7 @@ func (c *Client) handleIncomingP2PPunch(
 
 	res, err := punch.PunchUDPDispatched(session.ctx, dispatcher, notify.Candidates, session.updates, sessionID, sessionToken, 3*time.Second)
 	if err != nil {
-		log.Printf("[Agent] P2P UDP punch with controller %s failed (%v), awaiting Relay fallback", notify.DeviceID, err)
+		log.Printf("[Agent] 与控制端 %s 的 UDP 打洞失败 (%v)，等待走中继", notify.DeviceID, err)
 		return
 	}
 
@@ -481,19 +490,19 @@ func (c *Client) handleIncomingP2PPunch(
 	defer res.StopKeepalive()
 	defer res.Close()
 
-	log.Printf("[Agent] P2P UDP punch with controller %s SUCCESS! Remote=%s", notify.DeviceID, res.RemoteAddr)
+	log.Printf("[Agent] 与控制端 %s 的 UDP 打洞成功，对端 %s", notify.DeviceID, res.RemoteAddr)
 	res.StartKeepalive(sessionCtx, p2pUDPKeepaliveInt)
 
 	// Dial local RDP UDP
 	rdpUDPAddr, err := net.ResolveUDPAddr("udp", c.cfg.RDP.Address)
 	if err != nil {
-		log.Printf("[Agent] Resolve local RDP UDP failed: %v", err)
+		log.Printf("[Agent] 解析本机 RDP UDP 地址失败: %v", err)
 		return
 	}
 
 	localConn, err := net.DialUDP("udp", nil, rdpUDPAddr)
 	if err != nil {
-		log.Printf("[Agent] Dial local RDP UDP socket failed: %v", err)
+		log.Printf("[Agent] 连接本机 RDP UDP 失败: %v", err)
 		return
 	}
 	defer localConn.Close()
@@ -503,7 +512,7 @@ func (c *Client) handleIncomingP2PPunch(
 	// repeats key setup per datagram.
 	codec, err := protocol.NewP2PCodec(notify.SessionID, sessionToken)
 	if err != nil {
-		log.Printf("[Agent] P2P session codec unavailable: %v", err)
+		log.Printf("[Agent] P2P 会话编解码不可用: %v", err)
 		return
 	}
 
@@ -526,7 +535,7 @@ func (c *Client) handleIncomingP2PPunch(
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					timeoutCount++
 					if timeoutCount >= idleLimit {
-						log.Printf("[Agent] P2P connection to %s timed out, disconnecting session", notify.DeviceID)
+						log.Printf("[Agent] 与控制端 %s 的 P2P 连接超时，正在断开会话", notify.DeviceID)
 						sessionCancel()
 						return
 					}

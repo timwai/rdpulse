@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -153,4 +154,26 @@ func TestParallelRaceActivatesRelayWhenP2PNotReady(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("after 300ms Happy-Eyeballs TCP=%s UDP=%s, want Relay", mgr.TCPPath(), mgr.UDPPath())
+}
+
+func TestIsCandidateLANUnmapsIPv4MappedAddress(t *testing.T) {
+	candidates := []protocol.CandidateInfo{
+		{Type: "lan", Protocol: "udp", Address: "192.168.192.219:65275"},
+		{Type: "lan", Protocol: "tcp", Address: "192.168.192.219:61709"},
+		{Type: "reflexive", Protocol: "udp", Address: "172.18.0.1:59631"},
+	}
+	peer, err := netip.ParseAddrPort("[::ffff:192.168.192.219]:65275")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isCandidateLAN(peer, candidates) {
+		t.Fatal("IPv4-mapped LAN peer must match lan/udp 192.168.192.219:65275")
+	}
+	reflexive, err := netip.ParseAddrPort("172.18.0.1:59631")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if isCandidateLAN(reflexive, candidates) {
+		t.Fatal("reflexive candidate must not be classified as LAN")
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"rdpulse/internal/acl"
 	"rdpulse/internal/config"
@@ -164,6 +165,38 @@ func TestWebServerEndpoints(t *testing.T) {
 	}
 	if savedCfg.RDP.PortRange.Start != 25000 || savedCfg.RDP.PortRange.End != 25100 {
 		t.Errorf("expected port range 25000-25100, got %d-%d", savedCfg.RDP.PortRange.Start, savedCfg.RDP.PortRange.End)
+	}
+
+	listenBody, _ := json.Marshal(map[string]interface{}{
+		"quicListen":       ":20000",
+		"rendezvousListen": ":20001",
+		"tlsListen":        ":20000",
+		"tlsDisabled":      false,
+	})
+	req = withAuth(httptest.NewRequest(http.MethodPost, "/api/config", bytes.NewReader(listenBody)))
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update listen config status: %d, body=%s", w.Code, w.Body.String())
+	}
+	if cfg.Server.QUIC.Listen != ":20000" || cfg.Server.Rendezvous.Listen != ":20001" {
+		t.Fatalf("listen settings not applied in memory: quic=%s rdzv=%s", cfg.Server.QUIC.Listen, cfg.Server.Rendezvous.Listen)
+	}
+
+	future := time.Now().Add(72 * time.Hour).UTC().Format(time.RFC3339)
+	expiryBody, _ := json.Marshal(map[string]string{"expiresAt": future})
+	req = withAuth(httptest.NewRequest(http.MethodPatch, "/api/invitations/test-box", bytes.NewReader(expiryBody)))
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch invitation expiry status: %d, body=%s", w.Code, w.Body.String())
+	}
+	invs, err := db.ListEnrollmentInvitations()
+	if err != nil || len(invs) != 1 {
+		t.Fatalf("list invitations after patch: %v err=%v", invs, err)
+	}
+	if invs[0].ExpiresAt.Sub(time.Now()) < 48*time.Hour {
+		t.Fatalf("invitation expiry not extended: %v", invs[0].ExpiresAt)
 	}
 
 	// 5. Test Log Hub

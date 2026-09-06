@@ -67,7 +67,7 @@ func StartLocalProxy(ctx context.Context, listenAddr, relayTargetAddr string, pa
 	go p.serveTCP(ctx)
 	go p.serveUDP(ctx)
 
-	log.Printf("[Controller] Local RDP Proxy listening on %s (TCP + UDP)", listenAddr)
+	log.Printf("[Controller] 本机 RDP 代理已监听 %s (TCP + UDP)，中继目标 %s", listenAddr, relayTargetAddr)
 	return p, nil
 }
 
@@ -114,7 +114,7 @@ func (p *LocalProxy) handleTCPClient(ctx context.Context, clientConn net.Conn) {
 	defer clientConn.Close()
 
 	activePath := p.pathMgr.TCPPath()
-	log.Printf("[Controller] Routing TCP connection through: %s", activePath)
+	log.Printf("[Controller] 收到本机 mstsc TCP 连接 %s，走 %s", clientConn.RemoteAddr(), activePath)
 
 	switch activePath {
 	case path.PathDirectLAN, path.PathDirectTCP:
@@ -129,13 +129,13 @@ func (p *LocalProxy) proxyViaDirectTCP(ctx context.Context, clientConn net.Conn)
 	defer cancel()
 	directConn, err := p.pathMgr.DialDirectTCP(dialCtx)
 	if err != nil {
-		log.Printf("[Controller] Direct TCP unavailable (%v), falling back to Relay", err)
+		log.Printf("[Controller] 直连 TCP 不可用 (%v)，改走中继", err)
 		p.proxyViaRelay(ctx, clientConn)
 		return
 	}
 	defer directConn.Close()
 
-	log.Println("[Controller] Bridging mstsc via P2P Direct TCP")
+	log.Printf("[Controller] 正在通过直连 TCP 转发 mstsc -> %s", directConn.RemoteAddr())
 
 	done := make(chan struct{})
 	go func() {
@@ -153,7 +153,7 @@ func (p *LocalProxy) proxyViaDirectTCP(ctx context.Context, clientConn net.Conn)
 
 func (p *LocalProxy) proxyViaRelay(ctx context.Context, clientConn net.Conn) {
 	if p.relayTr == nil {
-		log.Println("[Controller] Cannot proxy TCP: QUIC Relay transport unavailable")
+		log.Println("[Controller] 无法转发 TCP：中继传输不可用")
 		return
 	}
 
@@ -161,10 +161,11 @@ func (p *LocalProxy) proxyViaRelay(ctx context.Context, clientConn net.Conn) {
 	defer cancel()
 	relayConn, err := p.relayTr.OpenStream(openCtx)
 	if err != nil {
-		log.Printf("[Controller] Open QUIC Relay stream failed: %v", err)
+		log.Printf("[Controller] 打开中继 TCP 流失败: %v", err)
 		return
 	}
 	defer relayConn.Close()
+	log.Printf("[Controller] 正在通过中继转发 mstsc TCP -> %s", p.relayTargetAddr)
 
 	// tcp.Proxy tunes the mstsc-facing socket and copies through pooled buffers.
 	proxy := tcp.NewProxy(clientConn, relayConn, nil)
@@ -230,6 +231,7 @@ func (p *LocalProxy) serveUDP(ctx context.Context) {
 		if current := lastClientAddr.Load(); current == nil || *current != remoteAddr {
 			addr := remoteAddr
 			lastClientAddr.Store(&addr)
+			log.Printf("[Controller] 本机 mstsc UDP 源地址: %s", remoteAddr)
 		}
 
 		// Send UDP payload via PathManager

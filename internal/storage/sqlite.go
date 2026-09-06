@@ -13,7 +13,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var ErrEnrollmentInvalid = errors.New("enrollment invitation is invalid, expired, or already consumed")
+var (
+	ErrEnrollmentInvalid  = errors.New("enrollment invitation is invalid, expired, or already consumed")
+	ErrInvitationNotFound = errors.New("enrollment invitation not found")
+)
 
 // AgentRecord represents a registered agent in the database
 type AgentRecord struct {
@@ -153,6 +156,24 @@ func (d *DB) UpsertEnrollmentInvitation(deviceID, token string, expiresAt time.T
 			token_hash = excluded.token_hash
 	`, deviceID, enrollmentTokenHash(token), expiresAt.UTC())
 	return err
+}
+
+// UpdateEnrollmentInvitationExpiry changes only the expiry, keeping the token and consumed state.
+func (d *DB) UpdateEnrollmentInvitationExpiry(deviceID string, expiresAt time.Time) error {
+	res, err := d.db.Exec(`
+		UPDATE enrollment_invitations SET expires_at = ? WHERE device_id = ?
+	`, expiresAt.UTC(), deviceID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrInvitationNotFound
+	}
+	return nil
 }
 
 func (d *DB) ValidateEnrollmentInvitation(deviceID, token string, now time.Time) (bool, error) {

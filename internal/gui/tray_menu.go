@@ -1,8 +1,11 @@
 package gui
 
 import (
-	"os/exec"
+	"errors"
+	"fmt"
+	"runtime"
 	"strings"
+	"time"
 	"unsafe"
 
 	"github.com/lxn/win"
@@ -121,8 +124,64 @@ func appendTrayMenuItem(hMenu win.HMENU, it trayMenuItem) {
 	win.InsertMenuItem(hMenu, pos, true, &item)
 }
 
+func clipboardUTF16(text string) ([]uint16, error) {
+	return windows.UTF16FromString(text)
+}
+
 func copyTextToClipboard(text string) {
-	cmd := exec.Command("clip")
-	cmd.Stdin = strings.NewReader(text)
-	_ = cmd.Run()
+	_ = setClipboardUnicode(text)
+}
+
+func setClipboardUnicode(text string) error {
+	utf16, err := clipboardUTF16(text)
+	if err != nil {
+		return err
+	}
+	if len(utf16) == 0 {
+		return errors.New("empty clipboard text")
+	}
+
+	// OpenClipboard / SetClipboardData must stay on one OS thread.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	var hwnd win.HWND
+	if globalApp != nil {
+		hwnd = globalApp.hwnd
+	}
+	opened := false
+	for i := 0; i < 10; i++ {
+		if win.OpenClipboard(hwnd) {
+			opened = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !opened {
+		return fmt.Errorf("OpenClipboard failed: %w", windows.GetLastError())
+	}
+	defer win.CloseClipboard()
+	if !win.EmptyClipboard() {
+		return fmt.Errorf("EmptyClipboard failed: %w", windows.GetLastError())
+	}
+
+	size := uintptr(len(utf16)) * unsafe.Sizeof(utf16[0])
+	hMem := win.GlobalAlloc(win.GMEM_MOVEABLE, size)
+	if hMem == 0 {
+		return fmt.Errorf("GlobalAlloc failed: %w", windows.GetLastError())
+	}
+	ptr := win.GlobalLock(hMem)
+	if ptr == nil {
+		win.GlobalFree(hMem)
+		return fmt.Errorf("GlobalLock failed: %w", windows.GetLastError())
+	}
+	dest := unsafe.Slice((*uint16)(ptr), len(utf16))
+	copy(dest, utf16)
+	win.GlobalUnlock(hMem)
+
+	if win.SetClipboardData(win.CF_UNICODETEXT, win.HANDLE(hMem)) == 0 {
+		win.GlobalFree(hMem)
+		return fmt.Errorf("SetClipboardData failed: %w", windows.GetLastError())
+	}
+	return nil
 }

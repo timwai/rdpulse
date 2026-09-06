@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/netip"
 	"sync"
@@ -232,6 +233,8 @@ func PunchUDPDispatched(
 	defer cancel()
 	conn := dispatcher.Conn()
 	targets := resolveUDPCandidates(candidates)
+	started := time.Now()
+	log.Printf("[Punch] UDP 打洞开始 Session=%d 超时=%s 初始候选=%d", sessionID, timeout, len(targets))
 	if len(targets) == 0 && candidateUpdates == nil {
 		return nil, errors.New("no udp candidates available for punching")
 	}
@@ -283,10 +286,15 @@ func PunchUDPDispatched(
 				_, _ = conn.WriteToUDP(ack.Encode(buf[:0]), target)
 			}
 			keepRegistration = true
+			log.Printf("[Punch] UDP 打洞成功 Session=%d 对端=%s 耗时=%s", sessionID, peer, time.Since(started).Round(time.Millisecond))
 			return &PunchResult{Conn: conn, RemoteAddr: peer, SessionID: sessionID, Token: sessionToken, packets: packets, release: release}, nil
 		case update, ok := <-candidateUpdates:
 			if ok {
+				before := len(targets)
 				targets = mergeUDPAddrs(targets, resolveUDPCandidates(update))
+				if added := len(targets) - before; added > 0 {
+					log.Printf("[Punch] UDP 新增候选 %d 个，当前共 %d 个 Session=%d", added, len(targets), sessionID)
+				}
 			} else {
 				candidateUpdates = nil
 			}
@@ -304,6 +312,7 @@ func PunchUDPDispatched(
 				_, _ = conn.WriteToUDP(data, target)
 			}
 		case <-punchCtx.Done():
+			log.Printf("[Punch] UDP 打洞超时 Session=%d 已探测候选=%d 耗时=%s", sessionID, len(targets), time.Since(started).Round(time.Millisecond))
 			return nil, ErrPunchTimeout
 		}
 	}

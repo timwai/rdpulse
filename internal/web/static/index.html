@@ -10,6 +10,7 @@
     ::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.05); }
     ::-webkit-scrollbar-thumb { background: rgba(150, 150, 150, 0.3); border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: rgba(150, 150, 150, 0.5); }
+    #cfg-raw-yaml { tab-size: 2; }
   </style>
 </head>
 <body class="bg-[#0f172a] text-[#e2e8f0] font-sans antialiased min-h-screen flex">
@@ -295,8 +296,8 @@
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
             <div>
               <label class="block text-slate-300 font-medium mb-1">公网主机名 / IP (publicHost)</label>
-              <input id="cfg-public-host" type="text" placeholder="例如: rdp.example.com 或 123.45.67.89" class="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 outline-none">
-              <span class="text-[11px] text-slate-500 mt-1 block">客户端连接中继和生成入网配置时所使用的公网地址</span>
+              <input id="cfg-public-host" type="text" placeholder="例如: rdp.example.com 或 123.45.67.89" class="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 outline-none" oninput="updateClientPreview()">
+              <span class="text-[11px] text-slate-500 mt-1 block">写入客户端配置的主机名；不要填 Docker 网桥地址</span>
             </div>
 
             <div>
@@ -309,6 +310,30 @@
             </div>
 
             <div>
+              <label class="block text-slate-300 font-medium mb-1">QUIC 监听 (server.quic.listen)</label>
+              <input id="cfg-quic-listen" type="text" placeholder=":20000" class="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 outline-none" oninput="updateClientPreview()">
+              <span class="text-[11px] text-amber-400/80 mt-1 block">保存后写入配置；真正换端口需重启 Relay</span>
+            </div>
+
+            <div>
+              <label class="block text-slate-300 font-medium mb-1">TLS/TCP 备用监听 (server.tls.listen)</label>
+              <div class="flex items-center gap-2">
+                <input id="cfg-tls-listen" type="text" placeholder=":20000" class="flex-1 bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 outline-none">
+                <label class="flex items-center gap-1.5 shrink-0 text-slate-400">
+                  <input id="cfg-tls-disabled" type="checkbox" class="rounded border-slate-600">
+                  关闭备用通道
+                </label>
+              </div>
+              <span class="text-[11px] text-amber-400/80 mt-1 block">保存后写入配置；真正换端口需重启 Relay</span>
+            </div>
+
+            <div>
+              <label class="block text-slate-300 font-medium mb-1">Rendezvous 监听 (server.rendezvous.listen)</label>
+              <input id="cfg-rdzv-listen" type="text" placeholder=":20001" class="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 outline-none" oninput="updateClientPreview()">
+              <span class="text-[11px] text-amber-400/80 mt-1 block">UDP NAT 反射。须对公网暴露；bridge 映射要含 UDP</span>
+            </div>
+
+            <div>
               <label class="block text-slate-300 font-medium mb-1">兼容模式分配端口池范围 (portRange)</label>
               <div class="flex items-center gap-2">
                 <input id="cfg-port-start" type="number" placeholder="起始端口 如 3389" class="w-1/2 bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 outline-none">
@@ -318,10 +343,23 @@
               <span class="text-[11px] text-slate-500 mt-1 block">为每个被控设备持久分配的固定公网端口范围</span>
             </div>
 
-            <div>
+            <div class="md:col-span-2">
               <label class="block text-slate-300 font-medium mb-1">Web 控制台管理员 Token (web.token)</label>
               <input id="cfg-web-token" type="password" placeholder="留空则启动时动态生成；输入新密码可固定" class="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 outline-none">
               <span class="text-[11px] text-slate-500 mt-1 block">Web 控制台访问凭证，若修改保存请牢记新密钥</span>
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-slate-700 bg-[#0f172a]/70 p-3 space-y-2">
+            <div class="text-[11px] font-semibold text-slate-300">客户端应填写的地址（按上面主机名和监听端口生成）</div>
+            <div class="flex flex-wrap items-center gap-2 text-xs">
+              <span class="text-slate-500">中继</span>
+              <code id="cfg-client-relay" class="font-mono text-indigo-300">-</code>
+              <button type="button" onclick="copyText(document.getElementById('cfg-client-relay').textContent)" class="text-[11px] text-slate-400 hover:text-white">复制</button>
+              <span class="text-slate-600">·</span>
+              <span class="text-slate-500">Rendezvous</span>
+              <code id="cfg-client-rdzv" class="font-mono text-cyan-300">-</code>
+              <button type="button" onclick="copyText(document.getElementById('cfg-client-rdzv').textContent)" class="text-[11px] text-slate-400 hover:text-white">复制</button>
             </div>
           </div>
 
@@ -345,10 +383,11 @@
             <span class="text-xs font-mono text-slate-500 bg-slate-800/80 px-2.5 py-1 rounded border border-slate-700">configs/relay.yaml</span>
           </div>
 
-          <textarea id="cfg-raw-yaml" rows="16" spellcheck="false" class="w-full bg-[#0b0f19] border border-[#334155] rounded-xl p-4 font-mono text-xs text-indigo-300 outline-none focus:border-indigo-500 leading-relaxed"></textarea>
+          <textarea id="cfg-raw-yaml" rows="18" spellcheck="false" class="w-full bg-[#0b0f19] border border-[#334155] rounded-xl p-4 font-mono text-xs text-indigo-300 outline-none focus:border-indigo-500 leading-relaxed" oninput="clearYamlError()"></textarea>
+          <pre id="cfg-yaml-error" class="hidden whitespace-pre-wrap text-[11px] text-rose-400 bg-rose-950/40 border border-rose-500/30 rounded-lg px-3 py-2"></pre>
 
           <div class="flex justify-between items-center pt-2">
-            <span class="text-[11px] text-slate-500">提示：修改底层监听网络参数需重启生效；访问授权矩阵、邀请与安全配置免重启即刻热生效。</span>
+            <span class="text-[11px] text-slate-500">提示：监听端口写入后需重启 Relay；授权、邀请、publicHost 等可热生效。</span>
             <button onclick="saveConfigYaml()" class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-md shadow-emerald-600/30">
               语法校验并保存全量 YAML 配置
             </button>
@@ -393,10 +432,17 @@
           <input id="modal-device-id" type="text" placeholder="例如: office-pc" class="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 outline-none">
         </div>
 
-        <div>
-          <label class="block text-slate-300 font-medium mb-1">邀请有效期 (天)</label>
-          <input id="modal-expires" type="number" value="30" class="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 outline-none">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">有效期（天）</label>
+            <input id="modal-expires" type="number" value="30" min="1" class="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 outline-none">
+          </div>
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">或指定到期时间</label>
+            <input id="modal-expires-at" type="datetime-local" class="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 outline-none">
+          </div>
         </div>
+        <p class="text-[11px] text-slate-500 -mt-2">填了到期时间则按该时刻；否则按天数从现在起算。</p>
 
         <div id="modal-result" class="hidden space-y-3 pt-2">
           <div>
@@ -415,6 +461,10 @@
         <button id="modal-submit-btn" onclick="submitCreateInvite()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-md">生成并生效</button>
       </div>
     </div>
+  </div>
+
+  <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] pointer-events-none opacity-0 translate-y-2 transition-all duration-200 max-w-[560px] px-4 py-2 rounded-lg text-sm font-medium shadow-lg bg-slate-100 text-slate-900">
+    <span id="toast-msg"></span>
   </div>
 
   <script>
@@ -444,6 +494,65 @@
       if (tabId === 'tab-invites') loadInvitations();
       if (tabId === 'tab-access') loadAccess();
       if (tabId === 'tab-config') loadConfig();
+    }
+
+    let toastTimer = null;
+    function showToast(msg, kind) {
+      const toast = document.getElementById('toast');
+      document.getElementById('toast-msg').textContent = msg;
+      toast.classList.remove('bg-slate-100', 'text-slate-900', 'bg-rose-600', 'text-white');
+      if (kind === 'error') toast.classList.add('bg-rose-600', 'text-white');
+      else toast.classList.add('bg-slate-100', 'text-slate-900');
+      toast.classList.remove('opacity-0', 'translate-y-2');
+      toast.classList.add('opacity-100', 'translate-y-0');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toast.classList.remove('opacity-100', 'translate-y-0');
+        toast.classList.add('opacity-0', 'translate-y-2');
+      }, 2600);
+    }
+
+    function copyText(text) {
+      const value = (text || '').trim();
+      if (!value || value === '-') return;
+      if (navigator.clipboard) navigator.clipboard.writeText(value);
+      showToast('已复制');
+    }
+
+    function listenPort(listen, fallback) {
+      if (!listen) return fallback;
+      const i = String(listen).lastIndexOf(':');
+      if (i < 0) return fallback;
+      return String(listen).slice(i + 1) || fallback;
+    }
+
+    function updateClientPreview() {
+      const host = (document.getElementById('cfg-public-host').value || '').trim() || '未配置主机名';
+      const relay = host + ':' + listenPort(document.getElementById('cfg-quic-listen').value, '443');
+      const rdzv = host + ':' + listenPort(document.getElementById('cfg-rdzv-listen').value, '21116');
+      document.getElementById('cfg-client-relay').textContent = relay;
+      document.getElementById('cfg-client-rdzv').textContent = rdzv;
+    }
+
+    function clearYamlError() {
+      const el = document.getElementById('cfg-yaml-error');
+      if (!el) return;
+      el.classList.add('hidden');
+      el.textContent = '';
+    }
+
+    function showYamlError(msg) {
+      const el = document.getElementById('cfg-yaml-error');
+      el.textContent = msg || '';
+      el.classList.toggle('hidden', !msg);
+    }
+
+    function toLocalDateTimeValue(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      const pad = n => String(n).padStart(2, '0');
+      return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
     }
 
     function escapeHtml(str) {
@@ -655,8 +764,20 @@
           tdHash.textContent = hashShort;
 
           const tdExpires = document.createElement('td');
-          tdExpires.className = 'p-4 text-slate-400';
-          tdExpires.textContent = (inv.expiresAt || '').replace('T', ' ').substring(0, 19);
+          tdExpires.className = 'p-4';
+          const wrap = document.createElement('div');
+          wrap.className = 'flex items-center gap-2';
+          const expInput = document.createElement('input');
+          expInput.type = 'datetime-local';
+          expInput.value = toLocalDateTimeValue(inv.expiresAt);
+          expInput.className = 'bg-[#0f172a] border border-[#334155] rounded-lg px-2 py-1 text-white font-mono text-[11px]';
+          const saveExp = document.createElement('button');
+          saveExp.className = 'text-[11px] text-indigo-400 hover:text-indigo-200';
+          saveExp.textContent = '保存';
+          saveExp.onclick = () => saveInvitationExpiry(inv.deviceId, expInput.value);
+          wrap.appendChild(expInput);
+          wrap.appendChild(saveExp);
+          tdExpires.appendChild(wrap);
 
           const tdStatus = document.createElement('td');
           tdStatus.className = 'p-4';
@@ -685,12 +806,32 @@
       }
     }
 
+    async function saveInvitationExpiry(id, localValue) {
+      if (!localValue) {
+        showToast('请选择到期时间', 'error');
+        return;
+      }
+      const expiresAt = new Date(localValue).toISOString();
+      const res = await authFetch(`/api/invitations/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expiresAt })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast('更新过期时间失败: ' + (err.error || res.statusText), 'error');
+        return;
+      }
+      showToast('过期时间已更新');
+      loadInvitations();
+    }
+
     async function deleteInvitation(id) {
       if (!confirm(`作废邀请 ${id}？`)) return;
       const res = await authFetch(`/api/invitations/${encodeURIComponent(id)}`, { method: 'DELETE' });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        alert('作废失败: ' + (err.error || res.statusText));
+        showToast('作废失败: ' + (err.error || res.statusText), 'error');
       }
       loadInvitations();
     }
@@ -700,6 +841,7 @@
       document.getElementById('invite-modal').classList.add('flex');
       document.getElementById('modal-result').classList.add('hidden');
       document.getElementById('modal-submit-btn').classList.remove('hidden');
+      document.getElementById('modal-expires-at').value = '';
     }
 
     function closeModal() {
@@ -710,19 +852,22 @@
     async function submitCreateInvite() {
       const deviceId = document.getElementById('modal-device-id').value.trim();
       const expiresInDays = parseInt(document.getElementById('modal-expires').value) || 30;
+      const expiresLocal = document.getElementById('modal-expires-at').value;
       if (!deviceId) {
-        alert('请输入设备 ID');
+        showToast('请输入设备 ID', 'error');
         return;
       }
+      const payload = { deviceId, expiresInDays };
+      if (expiresLocal) payload.expiresAt = new Date(expiresLocal).toISOString();
       try {
         const res = await authFetch('/api/invitations', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ deviceId, expiresInDays })
+          body: JSON.stringify(payload)
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          alert('生成失败: ' + (err.error || res.statusText));
+          showToast('生成失败: ' + (err.error || res.statusText), 'error');
           return;
         }
         const data = await res.json();
@@ -731,7 +876,7 @@
         document.getElementById('modal-result').classList.remove('hidden');
         document.getElementById('modal-submit-btn').classList.add('hidden');
       } catch (e) {
-        alert('生成失败: ' + e);
+        showToast('生成失败: ' + e, 'error');
       }
     }
 
@@ -761,9 +906,9 @@
           alert('保存失败: ' + (err.error || res.statusText));
           return;
         }
-        alert('授权策略已成功更新并即刻热生效，且已同步持久化保存至服务端配置文件 (relay.yaml)！');
+        showToast('授权策略已保存并热生效');
       } catch (e) {
-        alert('保存失败 (请确认 JSON 格式合法): ' + e);
+        showToast('保存失败 (请确认 JSON 格式合法): ' + e, 'error');
       }
     }
 
@@ -774,10 +919,16 @@
         const data = await res.json();
         document.getElementById('cfg-public-host').value = data.publicHost || '';
         document.getElementById('cfg-default-policy').value = data.defaultPolicy || 'deny';
+        document.getElementById('cfg-quic-listen').value = data.quicListen || '';
+        document.getElementById('cfg-tls-listen').value = data.tlsListen || '';
+        document.getElementById('cfg-tls-disabled').checked = !!data.tlsDisabled;
+        document.getElementById('cfg-rdzv-listen').value = data.rendezvousListen || '';
         document.getElementById('cfg-port-start').value = data.portRangeStart || 3389;
         document.getElementById('cfg-port-end').value = data.portRangeEnd || 3389;
         document.getElementById('cfg-web-token').value = data.webToken || '';
         document.getElementById('cfg-raw-yaml').value = data.rawYaml || '';
+        clearYamlError();
+        updateClientPreview();
       } catch (e) {
         console.error(e);
       }
@@ -791,11 +942,19 @@
       const webToken = document.getElementById('cfg-web-token').value;
 
       if (!publicHost) {
-        alert('公网主机名 / IP 不能为空');
+        showToast('公网主机名 / IP 不能为空', 'error');
         return;
       }
       if (isNaN(portRangeStart) || isNaN(portRangeEnd) || portRangeStart <= 0 || portRangeEnd < portRangeStart || portRangeEnd > 65535) {
-        alert('端口池范围不合法 (范围需在 1 ~ 65535 之间，且终止端口不小于起始端口)');
+        showToast('端口池范围不合法 (1 ~ 65535，且终止不小于起始)', 'error');
+        return;
+      }
+      const quicListen = document.getElementById('cfg-quic-listen').value.trim();
+      const tlsListen = document.getElementById('cfg-tls-listen').value.trim();
+      const rendezvousListen = document.getElementById('cfg-rdzv-listen').value.trim();
+      const tlsDisabled = document.getElementById('cfg-tls-disabled').checked;
+      if (!quicListen || !rendezvousListen) {
+        showToast('QUIC / Rendezvous 监听地址不能为空', 'error');
         return;
       }
 
@@ -804,7 +963,11 @@
           publicHost,
           defaultPolicy,
           portRangeStart,
-          portRangeEnd
+          portRangeEnd,
+          quicListen,
+          tlsListen,
+          tlsDisabled,
+          rendezvousListen
         };
         if (webToken) {
           payload.webToken = webToken;
@@ -816,27 +979,28 @@
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          alert('保存配置失败: ' + (err.error || res.statusText));
+          showToast('保存配置失败: ' + (err.error || res.statusText), 'error');
           return;
         }
         if (webToken && webToken !== authToken) {
           saveToken(webToken);
           initTokenUI();
         }
-        alert('核心配置已成功更新，并已同步持久化写入 relay.yaml（保留原有注释）！');
+        showToast('核心参数已保存。监听地址需重启 Relay 后生效');
         loadConfig();
       } catch (e) {
-        alert('保存失败: ' + e);
+        showToast('保存失败: ' + e, 'error');
       }
     }
 
     async function saveConfigYaml() {
       const rawYaml = document.getElementById('cfg-raw-yaml').value;
       if (!rawYaml.trim()) {
-        alert('YAML 配置内容不能为空');
+        showYamlError('YAML 配置内容不能为空');
+        showToast('YAML 不能为空', 'error');
         return;
       }
-      if (!confirm('确认保存并应用全量 YAML 配置吗？系统将校验语法并同步回写到 configs/relay.yaml。')) return;
+      if (!confirm('确认保存并应用全量 YAML 配置吗？系统将校验语法并同步回写到配置文件。')) return;
 
       try {
         const res = await authFetch('/api/config', {
@@ -846,13 +1010,17 @@
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          alert('YAML 校验/保存失败: ' + (err.error || res.statusText));
+          const msg = err.error || res.statusText;
+          showYamlError(msg);
+          showToast('YAML 校验失败', 'error');
           return;
         }
-        alert('全量 YAML 配置校验通过，已成功同步保存至服务端配置文件！');
+        clearYamlError();
+        showToast('YAML 已校验并保存');
         loadConfig();
       } catch (e) {
-        alert('保存失败: ' + e);
+        showYamlError(String(e));
+        showToast('保存失败: ' + e, 'error');
       }
     }
 

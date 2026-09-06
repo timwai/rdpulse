@@ -54,7 +54,7 @@ func (c *Client) handleDirectTCP(ctx context.Context, peer net.Conn, sessions *p
 			return
 		}
 		if !errors.Is(err, net.ErrClosed) {
-			log.Printf("[Agent] Rejected direct TCP peer: %v", err)
+			log.Printf("[Agent] 拒绝直连 TCP 对端: %v", err)
 		}
 		return
 	}
@@ -65,10 +65,11 @@ func (c *Client) handleDirectTCP(ctx context.Context, peer net.Conn, sessions *p
 	}
 	local, err := net.DialTimeout("tcp", target, 3*time.Second)
 	if err != nil {
-		log.Printf("[Agent] Direct TCP session %d could not reach local RDP: %v", sessionID, err)
+		log.Printf("[Agent] 直连 TCP Session %d 无法连接本机 RDP: %v", sessionID, err)
 		return
 	}
 	defer local.Close()
+	log.Printf("[Agent] 直连 TCP Session %d 已接入本机 RDP %s，对端 %s", sessionID, target, peer.RemoteAddr())
 
 	done := make(chan struct{})
 	go func() {

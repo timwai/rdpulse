@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"rdpulse/internal/nat"
@@ -24,6 +25,7 @@ func (c *Client) refreshControlledCandidates(ctx context.Context, writer *protoc
 				continue
 			}
 			previous = candidates
+			log.Printf("[Agent] 局域网候选已变化，向控制端同步: %s", protocol.FormatCandidates(candidates))
 			for _, route := range sessions.routes() {
 				_ = writer.WriteMessage(&protocol.ControlMessage{
 					Type:           protocol.MsgTypeCandidateExchange,
@@ -51,6 +53,7 @@ func (c *Client) refreshControllerCandidates(ctx context.Context, writer *protoc
 				continue
 			}
 			previous = candidates
+			log.Printf("[Controller] 局域网候选已变化，向目标同步: %s", protocol.FormatCandidates(candidates))
 			_ = writer.WriteMessage(&protocol.ControlMessage{
 				Type:           protocol.MsgTypeCandidateExchange,
 				DeviceID:       c.cfg.Device.ID,

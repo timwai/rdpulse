@@ -169,10 +169,36 @@ func (l *QUICListener) Close() error {
 	return err
 }
 
+func dialTLSConfig(addr string, tlsConf *tls.Config) (*tls.Config, error) {
+	if tlsConf == nil {
+		tlsConf = &tls.Config{}
+	} else {
+		tlsConf = tlsConf.Clone()
+	}
+	if tlsConf.ServerName != "" {
+		return tlsConf, nil
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	// After ResolveUDPAddr, quic-go verifies the certificate against the
+	// remote IP unless ServerName is set. Keep the original hostname so a
+	// domain-issued cert is not rejected as "no IP SANs".
+	if host != "" && net.ParseIP(host) == nil {
+		tlsConf.ServerName = host
+	}
+	return tlsConf, nil
+}
+
 // Dial dials a QUIC server over a socket with enlarged kernel buffers.
 func Dial(ctx context.Context, addr string, tlsConf *tls.Config, quicConf *quic.Config) (transport.Transport, error) {
 	if quicConf == nil {
 		quicConf = DefaultQUICConfig()
+	}
+	tlsConf, err := dialTLSConfig(addr, tlsConf)
+	if err != nil {
+		return nil, err
 	}
 	remote, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {

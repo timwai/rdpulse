@@ -258,13 +258,19 @@ web:
 	newEnd := 20100
 	newPolicy := "allow"
 	newToken := "my-secret-token"
+	quicListen := ":20000"
+	rdzvListen := ":20001"
+	tlsDisabled := false
 
 	err := SyncServerSettingsToConfigFile(path, ServerSettingsUpdate{
-		PublicHost:     &newHost,
-		PortRangeStart: &newStart,
-		PortRangeEnd:   &newEnd,
-		DefaultPolicy:  &newPolicy,
-		WebToken:       &newToken,
+		PublicHost:       &newHost,
+		PortRangeStart:   &newStart,
+		PortRangeEnd:     &newEnd,
+		DefaultPolicy:    &newPolicy,
+		WebToken:         &newToken,
+		QuicListen:       &quicListen,
+		RendezvousListen: &rdzvListen,
+		TlsDisabled:      &tlsDisabled,
 	})
 	if err != nil {
 		t.Fatalf("SyncServerSettingsToConfigFile failed: %v", err)
@@ -293,6 +299,12 @@ web:
 	}
 	if cfg.Web.Token != "my-secret-token" {
 		t.Errorf("expected token my-secret-token, got %s", cfg.Web.Token)
+	}
+	if cfg.Server.QUIC.Listen != ":20000" {
+		t.Errorf("expected quic listen :20000, got %s", cfg.Server.QUIC.Listen)
+	}
+	if cfg.Server.Rendezvous.Listen != ":20001" {
+		t.Errorf("expected rendezvous listen :20001, got %s", cfg.Server.Rendezvous.Listen)
 	}
 }
 

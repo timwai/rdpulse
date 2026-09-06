@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 )
 
@@ -49,6 +50,26 @@ type CandidateInfo struct {
 	Type     string `json:"type"`     // "lan" or "reflexive"
 	Address  string `json:"address"`  // "ip:port"
 	Priority uint32 `json:"priority"`
+}
+
+// FormatCandidates is a compact diagnostic line for client logs.
+func FormatCandidates(cands []CandidateInfo) string {
+	if len(cands) == 0 {
+		return "无"
+	}
+	parts := make([]string, 0, len(cands))
+	for _, c := range cands {
+		kind := c.Type
+		if kind == "" {
+			kind = "?"
+		}
+		proto := c.Protocol
+		if proto == "" {
+			proto = "?"
+		}
+		parts = append(parts, kind+"/"+proto+" "+c.Address)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ControlMessage is the general envelope for control stream communications

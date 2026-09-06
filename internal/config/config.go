@@ -14,11 +14,15 @@ import (
 
 // ServerSettingsUpdate represents editable server configuration settings
 type ServerSettingsUpdate struct {
-	PublicHost     *string `json:"publicHost,omitempty"`
-	PortRangeStart *int    `json:"portRangeStart,omitempty"`
-	PortRangeEnd   *int    `json:"portRangeEnd,omitempty"`
-	DefaultPolicy  *string `json:"defaultPolicy,omitempty"`
-	WebToken       *string `json:"webToken,omitempty"`
+	PublicHost       *string `json:"publicHost,omitempty"`
+	PortRangeStart   *int    `json:"portRangeStart,omitempty"`
+	PortRangeEnd     *int    `json:"portRangeEnd,omitempty"`
+	DefaultPolicy    *string `json:"defaultPolicy,omitempty"`
+	WebToken         *string `json:"webToken,omitempty"`
+	QuicListen       *string `json:"quicListen,omitempty"`
+	TlsListen        *string `json:"tlsListen,omitempty"`
+	TlsDisabled      *bool   `json:"tlsDisabled,omitempty"`
+	RendezvousListen *string `json:"rendezvousListen,omitempty"`
 }
 
 type EnrollmentInvitation struct {
@@ -429,6 +433,26 @@ func SyncServerSettingsToConfigFile(configPath string, settings ServerSettingsUp
 	if settings.WebToken != nil {
 		webMap := findOrAddMappingChild(topMap, "web")
 		setMappingScalarChild(webMap, "token", "!!str", *settings.WebToken)
+	}
+	if settings.QuicListen != nil || settings.TlsListen != nil || settings.TlsDisabled != nil || settings.RendezvousListen != nil {
+		serverMap := findOrAddMappingChild(topMap, "server")
+		if settings.QuicListen != nil {
+			quicMap := findOrAddMappingChild(serverMap, "quic")
+			setMappingScalarChild(quicMap, "listen", "!!str", *settings.QuicListen)
+		}
+		if settings.TlsListen != nil || settings.TlsDisabled != nil {
+			tlsMap := findOrAddMappingChild(serverMap, "tls")
+			if settings.TlsListen != nil {
+				setMappingScalarChild(tlsMap, "listen", "!!str", *settings.TlsListen)
+			}
+			if settings.TlsDisabled != nil {
+				setMappingScalarChild(tlsMap, "disabled", "!!bool", strconv.FormatBool(*settings.TlsDisabled))
+			}
+		}
+		if settings.RendezvousListen != nil {
+			rdzvMap := findOrAddMappingChild(serverMap, "rendezvous")
+			setMappingScalarChild(rdzvMap, "listen", "!!str", *settings.RendezvousListen)
+		}
 	}
 
 	return writeYamlNodeToFile(configPath, &root)

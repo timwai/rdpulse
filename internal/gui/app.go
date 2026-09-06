@@ -80,6 +80,21 @@ type uiLogWriter struct {
 	app *App
 }
 
+// bestEffortWriter swallows write errors so a broken stderr (typical for
+// -H=windowsgui binaries) cannot abort the rest of a MultiWriter chain.
+type bestEffortWriter struct{ w io.Writer }
+
+func (w bestEffortWriter) Write(p []byte) (int, error) {
+	if w.w != nil {
+		_, _ = w.w.Write(p)
+	}
+	return len(p), nil
+}
+
+func newGUILogOutput(app *App, console io.Writer) io.Writer {
+	return io.MultiWriter(&uiLogWriter{app: app}, bestEffortWriter{console})
+}
+
 func (w *uiLogWriter) Write(p []byte) (n int, err error) {
 	str := string(p)
 	if w.app != nil {
@@ -90,7 +105,7 @@ func (w *uiLogWriter) Write(p []byte) (n int, err error) {
 				continue
 			}
 			w.app.logMu.Lock()
-			if len(w.app.logHistory) >= 1000 {
+			if len(w.app.logHistory) >= 2000 {
 				w.app.logHistory = w.app.logHistory[1:]
 			}
 			w.app.logHistory = append(w.app.logHistory, trimmed)
@@ -150,8 +165,7 @@ func RunApp(configPath string, startMinimized bool) {
 	}
 	globalApp = app
 
-	uiWriter := &uiLogWriter{app: app}
-	log.SetOutput(io.MultiWriter(os.Stderr, uiWriter))
+	log.SetOutput(newGUILogOutput(app, os.Stderr))
 
 	app.ensureConfigFile()
 
@@ -219,13 +233,13 @@ func RunApp(configPath string, startMinimized bool) {
 	}
 	w.SetHtml(htmlStr)
 
-	// Seed initial log history
-	app.logMu.Lock()
-	app.logHistory = append(app.logHistory,
-		fmt.Sprintf("[RDPulse GUI] 旗舰版原生客户端已启动 (minimized=%v)", startMinimized),
-		fmt.Sprintf("[RDPulse GUI] 配置文件路径: %s", app.configPath),
-	)
-	app.logMu.Unlock()
+	if app.cfg != nil {
+		log.Printf("[RDPulse GUI] 客户端已启动 minimized=%v 设备=%s 中继=%s Rendezvous=%s 本机RDP=%s 禁用P2P=%v",
+			startMinimized, app.cfg.Device.ID, app.cfg.Server.Address, app.cfg.Server.RendezvousAddress, app.cfg.RDP.Address, app.cfg.Transport.DisableP2P)
+	} else {
+		log.Printf("[RDPulse GUI] 客户端已启动 minimized=%v", startMinimized)
+	}
+	log.Printf("[RDPulse GUI] 配置文件路径: %s", app.configPath)
 
 	// Auto start target if configured
 	if app.cfg != nil && app.cfg.GUI.AutoStartTarget {
