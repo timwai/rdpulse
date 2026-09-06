@@ -108,6 +108,36 @@ func TestAppControllerConnectFailure(t *testing.T) {
 	}
 }
 
+func TestOnControllerDisconnectDoesNotDeadlock(t *testing.T) {
+	canceled := make(chan struct{})
+	app := &App{
+		controllerRunning: true,
+		controllerCancel: func() {
+			close(canceled)
+		},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		app.onControllerDisconnect()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("onControllerDisconnect deadlocked (likely notifyStatus re-entering ctrlMu)")
+	}
+	select {
+	case <-canceled:
+	default:
+		t.Fatal("expected session cancel to run")
+	}
+	if app.isControllerRunning() {
+		t.Fatal("expected controllerRunning to be false")
+	}
+}
+
 func TestAppTargetStartFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "agent.yaml")

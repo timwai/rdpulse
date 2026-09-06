@@ -1,5 +1,9 @@
 # RDPulse
 
+<p align="center">
+  <img src="docs/images/logo.png" alt="RDPulse" width="160">
+</p>
+
 自己搭一台中继，用 Windows 自带的远程桌面连回家或办公室。能打洞就直连，打不穿就走中继。对 `mstsc` 来说，连的始终是本机或一个普通公网端口。
 
 适合：不想把 3389 裸暴露在公网、又希望画面尽量接近局域网的个人或小团队。

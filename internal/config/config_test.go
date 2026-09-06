@@ -345,3 +345,43 @@ transport:
 	}
 }
 
+func TestLoadAgentConfigPersistsGUITheme(t *testing.T) {
+	path := writeTestConfig(t, "theme-agent.yaml", `
+server:
+  address: relay.example.com:443
+device:
+  id: device-test
+  secret: 0123456789abcdef0123456789abcdef
+gui:
+  theme: light
+`)
+	cfg, err := LoadAgentConfig(path)
+	if err != nil {
+		t.Fatalf("LoadAgentConfig failed: %v", err)
+	}
+	if cfg.GUI.Theme != "light" {
+		t.Fatalf("theme = %q, want light", cfg.GUI.Theme)
+	}
+
+	emptyPath := writeTestConfig(t, "theme-default.yaml", `
+server:
+  address: relay.example.com:443
+device:
+  id: device-test
+  secret: 0123456789abcdef0123456789abcdef
+`)
+	empty, err := LoadAgentConfig(emptyPath)
+	if err != nil {
+		t.Fatalf("LoadAgentConfig empty theme: %v", err)
+	}
+	if empty.GUI.Theme != "dark" {
+		t.Fatalf("empty theme = %q, want dark", empty.GUI.Theme)
+	}
+
+	cfg.GUI.Theme = "not-a-theme"
+	cfg.SetDefaults()
+	if cfg.GUI.Theme != "dark" {
+		t.Fatalf("invalid theme normalized to %q, want dark", cfg.GUI.Theme)
+	}
+}
+

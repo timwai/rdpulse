@@ -147,8 +147,9 @@ type AgentConfig struct {
 	} `yaml:"log" json:"log"`
 
 	GUI struct {
-		AutoStartTarget bool `yaml:"autoStartTarget" json:"autoStartTarget"`
-		MinimizeToTray  bool `yaml:"minimizeToTray" json:"minimizeToTray"`
+		AutoStartTarget bool   `yaml:"autoStartTarget" json:"autoStartTarget"`
+		MinimizeToTray  bool   `yaml:"minimizeToTray" json:"minimizeToTray"`
+		Theme           string `yaml:"theme" json:"theme"`
 	} `yaml:"gui" json:"gui"`
 }
 
@@ -480,6 +481,9 @@ func (cfg *AgentConfig) SetDefaults() {
 	}
 	if cfg.Log.Level == "" {
 		cfg.Log.Level = "info"
+	}
+	if cfg.GUI.Theme != "light" {
+		cfg.GUI.Theme = "dark"
 	}
 }
 

@@ -2,8 +2,10 @@
 $ErrorActionPreference = "Stop"
 
 Write-Host "[1/3] Checking/Generating Windows Manifest Resource & Icon..." -ForegroundColor Cyan
-if (!(Test-Path "assets/icon.ico")) {
+if (Test-Path "assets/icon.png") {
     go run scripts/generate_icon.go
+} elseif (!(Test-Path "assets/icon.ico")) {
+    Write-Error "assets/icon.png is required to generate the application icon"
 }
 if (Get-Command "rsrc" -ErrorAction SilentlyContinue) {
     rsrc -manifest cmd/agent/agent.manifest -ico assets/icon.ico -o cmd/agent/rsrc.syso

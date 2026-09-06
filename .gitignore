@@ -26,3 +26,6 @@ certs/
 # Go build cache & OS
 .DS_Store
 Thumbs.db
+
+# Local UI screenshot dumps
+.uishot/

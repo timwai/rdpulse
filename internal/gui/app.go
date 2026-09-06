@@ -3,6 +3,7 @@ package gui
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -31,17 +32,20 @@ import (
 )
 
 var (
-	user32          = windows.NewLazySystemDLL("user32.dll")
-	procAppendMenuW = user32.NewProc("AppendMenuW")
-	oldWndProc      uintptr
-	globalApp       *App
+	oldWndProc uintptr
+	globalApp  *App
 )
 
 const (
-	WM_TRAY_CALLBACK = win.WM_USER + 1024
-	TRAY_MENU_SHOW   = 1001
-	TRAY_MENU_TARGET = 1002
-	TRAY_MENU_EXIT   = 1003
+	WM_TRAY_CALLBACK     = win.WM_USER + 1024
+	TRAY_MENU_SHOW       = 1001
+	TRAY_MENU_TARGET     = 1002
+	TRAY_MENU_EXIT       = 1003
+	TRAY_MENU_DISCONNECT = 1004
+	TRAY_MENU_COPY_ID    = 1005
+	TRAY_MENU_AUTOSTART  = 1006
+	TRAY_MENU_CONFIG_DIR = 1007
+	TRAY_MENU_THEME      = 1008
 )
 
 type App struct {
@@ -129,6 +133,13 @@ func wndProcCallback(hwnd, msg, wp, lp uintptr) uintptr {
 }
 
 func RunApp(configPath string, startMinimized bool) {
+	release, ok := tryAcquireInstance()
+	if !ok {
+		activateExistingInstance()
+		return
+	}
+	defer release()
+
 	if configPath == "" {
 		configPath = config.DefaultAgentConfigPath()
 	}
@@ -162,6 +173,7 @@ func RunApp(configPath string, startMinimized bool) {
 			Width:  880,
 			Height: 680,
 			Center: true,
+			IconId: 1,
 		},
 	})
 	if w == nil {
@@ -195,14 +207,17 @@ func RunApp(configPath string, startMinimized bool) {
 	if err != nil {
 		log.Fatalf("Read embedded index.html failed: %v", err)
 	}
-	tailwindBytes, err := assets.ReadFile("assets/tailwind.js")
-	if err == nil {
-		htmlStr := string(htmlBytes)
-		htmlStr = strings.Replace(htmlStr, `<script src="tailwind.js"></script>`, `<script>`+string(tailwindBytes)+`</script>`, 1)
-		w.SetHtml(htmlStr)
-	} else {
-		w.SetHtml(string(htmlBytes))
+	htmlStr := string(htmlBytes)
+	if iconPNG, err := assets.ReadFile("assets/icon.png"); err == nil && len(iconPNG) > 0 {
+		htmlStr = strings.ReplaceAll(htmlStr, `src="icon.png"`, `src="data:image/png;base64,`+base64.StdEncoding.EncodeToString(iconPNG)+`"`)
 	}
+	if tailwindBytes, err := assets.ReadFile("assets/tailwind.js"); err == nil {
+		htmlStr = strings.Replace(htmlStr, `<script src="tailwind.js"></script>`, `<script>`+string(tailwindBytes)+`</script>`, 1)
+	}
+	if app.cfg != nil && app.cfg.GUI.Theme == "light" {
+		htmlStr = strings.Replace(htmlStr, `<html lang="zh-CN" class="dark">`, `<html lang="zh-CN">`, 1)
+	}
+	w.SetHtml(htmlStr)
 
 	// Seed initial log history
 	app.logMu.Lock()
@@ -262,8 +277,9 @@ func (app *App) registerBindings(w webview2.WebView) {
 				Address string `json:"address"`
 			} `json:"rdp"`
 			GUI struct {
-				AutoStartTarget bool `json:"autoStartTarget"`
-				MinimizeToTray  bool `json:"minimizeToTray"`
+				AutoStartTarget bool   `json:"autoStartTarget"`
+				MinimizeToTray  bool   `json:"minimizeToTray"`
+				Theme           string `json:"theme"`
 			} `json:"gui"`
 		}
 
@@ -303,6 +319,9 @@ func (app *App) registerBindings(w webview2.WebView) {
 		}
 		app.cfg.GUI.AutoStartTarget = in.GUI.AutoStartTarget
 		app.cfg.GUI.MinimizeToTray = in.GUI.MinimizeToTray
+		if in.GUI.Theme == "light" || in.GUI.Theme == "dark" {
+			app.cfg.GUI.Theme = in.GUI.Theme
+		}
 		app.cfg.SetDefaults()
 
 		data, err := yaml.Marshal(app.cfg)
@@ -316,6 +335,11 @@ func (app *App) registerBindings(w webview2.WebView) {
 			return "写入配置文件失败: " + err.Error(), nil
 		}
 		log.Printf("[RDPulse GUI] 配置文件已成功保存至: %s", app.configPath)
+		return "ok", nil
+	})
+
+	_ = w.Bind("goSetTheme", func(theme string) (string, error) {
+		app.persistGUITheme(theme)
 		return "ok", nil
 	})
 
@@ -364,9 +388,7 @@ func (app *App) registerBindings(w webview2.WebView) {
 
 	// 10. goCopyClipboard
 	_ = w.Bind("goCopyClipboard", func(text string) {
-		cmd := exec.Command("clip")
-		cmd.Stdin = strings.NewReader(text)
-		_ = cmd.Run()
+		copyTextToClipboard(text)
 	})
 
 	// 11. goMinimizeWindow
@@ -437,7 +459,7 @@ func (app *App) notifyLog(msg string) {
 	})
 }
 
-func (app *App) notifyStatus(tcpPath, udpPath string, targetRunning bool) {
+func (app *App) notifyStatus(tcpPath, udpPath string, targetRunning, controllerRunning bool) {
 	if app.w == nil {
 		return
 	}
@@ -445,7 +467,7 @@ func (app *App) notifyStatus(tcpPath, udpPath string, targetRunning bool) {
 		"tcpPath":           tcpPath,
 		"udpPath":           udpPath,
 		"targetRunning":     targetRunning,
-		"controllerRunning": app.isControllerRunning(),
+		"controllerRunning": controllerRunning,
 	})
 	app.w.Dispatch(func() {
 		defer func() { _ = recover() }()
@@ -540,7 +562,7 @@ func (app *App) onControllerConnect(targetID, proxyAddr string, autoMstsc, disab
 			app.controllerCancel = nil
 		}
 		app.ctrlMu.Unlock()
-		app.notifyStatus("-", "-", app.isTargetRunning())
+		app.notifyStatus("-", "-", app.isTargetRunning(), false)
 		return fmt.Errorf("连接失败: %w", err)
 	}
 
@@ -551,7 +573,7 @@ func (app *App) onControllerConnect(targetID, proxyAddr string, autoMstsc, disab
 
 	log.Printf("[Controller] 会话建立成功！本地代理已监听: %s", proxy.Addr())
 	log.Printf("[Controller] 链路状态: TCP=%s, UDP=%s", pathMgr.TCPPath(), pathMgr.UDPPath())
-	app.notifyStatus(pathMgr.TCPPath().String(), pathMgr.UDPPath().String(), app.isTargetRunning())
+	app.notifyStatus(pathMgr.TCPPath().String(), pathMgr.UDPPath().String(), app.isTargetRunning(), true)
 
 	go func() {
 		defer func() {
@@ -570,7 +592,7 @@ func (app *App) onControllerConnect(targetID, proxyAddr string, autoMstsc, disab
 				app.controllerPathMgr = nil
 			}
 			app.ctrlMu.Unlock()
-			app.notifyStatus("-", "-", app.isTargetRunning())
+			app.notifyStatus("-", "-", app.isTargetRunning(), false)
 			log.Println("[Controller] 远程会话已结束。")
 		}()
 
@@ -582,22 +604,25 @@ func (app *App) onControllerConnect(targetID, proxyAddr string, autoMstsc, disab
 
 func (app *App) onControllerDisconnect() {
 	app.ctrlMu.Lock()
-	defer app.ctrlMu.Unlock()
-
-	if app.controllerCancel != nil {
-		app.controllerCancel()
-		app.controllerCancel = nil
-	}
-	if app.controllerProxy != nil {
-		_ = app.controllerProxy.Close()
-		app.controllerProxy = nil
-	}
-	if app.controllerPathMgr != nil {
-		_ = app.controllerPathMgr.Close()
-		app.controllerPathMgr = nil
-	}
+	cancel := app.controllerCancel
+	proxy := app.controllerProxy
+	pathMgr := app.controllerPathMgr
+	app.controllerCancel = nil
+	app.controllerProxy = nil
+	app.controllerPathMgr = nil
 	app.controllerRunning = false
-	app.notifyStatus("-", "-", app.isTargetRunning())
+	app.ctrlMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if proxy != nil {
+		_ = proxy.Close()
+	}
+	if pathMgr != nil {
+		_ = pathMgr.Close()
+	}
+	app.notifyStatus("-", "-", app.isTargetRunning(), false)
 	log.Println("[Controller] 远程会话已断开。")
 }
 
@@ -635,7 +660,7 @@ func (app *App) onTargetStart() error {
 		app.targetRunning = false
 		app.targetCancel = nil
 		app.targetMu.Unlock()
-		app.notifyStatus("", "", false)
+		app.notifyStatus("", "", false, app.isControllerRunning())
 		log.Printf("[Target] 被控端已退出。")
 	}()
 
@@ -645,24 +670,25 @@ func (app *App) onTargetStart() error {
 			app.onTargetStop()
 			return fmt.Errorf("连接中继失败: %w", err)
 		}
-		app.notifyStatus("", "", true)
+		app.notifyStatus("", "", true, app.isControllerRunning())
 		return nil
 	case <-time.After(5 * time.Second):
-		app.notifyStatus("", "", true)
+		app.notifyStatus("", "", true, app.isControllerRunning())
 		return nil
 	}
 }
 
 func (app *App) onTargetStop() {
 	app.targetMu.Lock()
-	defer app.targetMu.Unlock()
-
-	if app.targetCancel != nil {
-		app.targetCancel()
-		app.targetCancel = nil
-	}
+	cancel := app.targetCancel
+	app.targetCancel = nil
 	app.targetRunning = false
-	app.notifyStatus("", "", false)
+	app.targetMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	app.notifyStatus("", "", false, app.isControllerRunning())
 	log.Printf("[Target] 前台被控端已停止。")
 }
 
@@ -681,7 +707,23 @@ func (app *App) checkLocalRDPStatus() bool {
 }
 
 func getAppIcon(size int) win.HICON {
-	// 1. Try loading from PE resource (embedded via rsrc.syso)
+	// Prefer the ICO embedded in this package. Always rewrite the temp file:
+	// a previous build left the old pulse/monitor icon in %TEMP% and never
+	// refreshed it, so tray/title-bar kept showing the stale image.
+	if icoBytes, err := assets.ReadFile("assets/icon.ico"); err == nil && len(icoBytes) > 0 {
+		tmpPath := filepath.Join(os.TempDir(), "rdpulse_app_icon.ico")
+		_ = os.WriteFile(tmpPath, icoBytes, 0644)
+		var h win.HANDLE
+		if size > 0 {
+			h = win.LoadImage(0, windows.StringToUTF16Ptr(tmpPath), win.IMAGE_ICON, int32(size), int32(size), win.LR_LOADFROMFILE)
+		} else {
+			h = win.LoadImage(0, windows.StringToUTF16Ptr(tmpPath), win.IMAGE_ICON, 0, 0, win.LR_LOADFROMFILE|win.LR_DEFAULTSIZE)
+		}
+		if h != 0 {
+			return win.HICON(h)
+		}
+	}
+
 	if size > 0 {
 		if h := win.LoadImage(win.GetModuleHandle(nil), win.MAKEINTRESOURCE(1), win.IMAGE_ICON, int32(size), int32(size), win.LR_SHARED); h != 0 {
 			return win.HICON(h)
@@ -695,29 +737,19 @@ func getAppIcon(size int) win.HICON {
 		}
 	}
 
-	// 2. Fallback: extract embedded assets/icon.ico to temp folder and load
-	if icoBytes, err := assets.ReadFile("assets/icon.ico"); err == nil && len(icoBytes) > 0 {
-		tmpPath := filepath.Join(os.TempDir(), "rdpulse_app_icon.ico")
-		if _, err := os.Stat(tmpPath); err != nil {
-			_ = os.WriteFile(tmpPath, icoBytes, 0644)
-		}
-		var h win.HANDLE
-		if size > 0 {
-			h = win.LoadImage(0, windows.StringToUTF16Ptr(tmpPath), win.IMAGE_ICON, int32(size), int32(size), win.LR_LOADFROMFILE)
-		} else {
-			h = win.LoadImage(0, windows.StringToUTF16Ptr(tmpPath), win.IMAGE_ICON, 0, 0, win.LR_LOADFROMFILE|win.LR_DEFAULTSIZE)
-		}
-		if h != 0 {
-			return win.HICON(h)
-		}
-	}
-
-	// 3. Ultimate fallback to standard Windows application icon
 	return win.LoadIcon(0, win.MAKEINTRESOURCE(win.IDI_APPLICATION))
 }
 
+func trayIconSize() int {
+	cx := int(win.GetSystemMetrics(win.SM_CXSMICON))
+	if cx < 16 {
+		return 16
+	}
+	return cx
+}
+
 func (app *App) setupTrayIcon() {
-	hIcon := getAppIcon(16)
+	hIcon := getAppIcon(trayIconSize())
 	nid := win.NOTIFYICONDATA{
 		CbSize:           uint32(unsafe.Sizeof(win.NOTIFYICONDATA{})),
 		HWnd:             app.hwnd,
@@ -739,36 +771,142 @@ func (app *App) removeTrayIcon() {
 	win.Shell_NotifyIcon(win.NIM_DELETE, &nid)
 }
 
+func (app *App) trayMenuState() trayMenuState {
+	deviceID := ""
+	themeDark := true
+	if app.cfg != nil {
+		deviceID = app.cfg.Device.ID
+		themeDark = app.cfg.GUI.Theme != "light"
+	}
+	return trayMenuState{
+		DeviceID:          deviceID,
+		WindowVisible:     app.hwnd != 0 && win.IsWindowVisible(app.hwnd),
+		TargetRunning:     app.isTargetRunning(),
+		ControllerRunning: app.isControllerRunning(),
+		AutoStart:         IsAutoStartEnabled(),
+		ThemeDark:         themeDark,
+	}
+}
+
 func (app *App) showTrayContextMenu() {
 	var pt win.POINT
 	win.GetCursorPos(&pt)
 	hMenu := win.CreatePopupMenu()
 	defer win.DestroyMenu(hMenu)
 
-	appendMenu(hMenu, 0, TRAY_MENU_SHOW, "🖥️ 显示主界面")
-	appendMenu(hMenu, 0, TRAY_MENU_TARGET, "🛡️ 启停本机被控")
-	appendMenu(hMenu, win.MF_SEPARATOR, 0, "")
-	appendMenu(hMenu, 0, TRAY_MENU_EXIT, "❌ 退出程序")
+	populateTrayMenu(hMenu, buildTrayMenuModel(app.trayMenuState()))
 
 	win.SetForegroundWindow(app.hwnd)
-	cmd := win.TrackPopupMenu(hMenu, win.TPM_RETURNCMD|win.TPM_NONOTIFY, pt.X, pt.Y, 0, app.hwnd, nil)
+	cmd := win.TrackPopupMenu(
+		hMenu,
+		win.TPM_RETURNCMD|win.TPM_NONOTIFY|win.TPM_RIGHTBUTTON|win.TPM_BOTTOMALIGN|win.TPM_RIGHTALIGN,
+		pt.X, pt.Y, 0, app.hwnd, nil,
+	)
+	win.PostMessage(app.hwnd, win.WM_NULL, 0, 0)
+	app.handleTrayMenuCommand(int32(cmd))
+}
+
+func (app *App) handleTrayMenuCommand(cmd int32) {
 	switch cmd {
 	case TRAY_MENU_SHOW:
+		if win.IsWindowVisible(app.hwnd) {
+			win.ShowWindow(app.hwnd, win.SW_HIDE)
+			return
+		}
 		win.ShowWindow(app.hwnd, win.SW_RESTORE)
 		win.SetForegroundWindow(app.hwnd)
 	case TRAY_MENU_TARGET:
-		app.targetMu.Lock()
-		running := app.targetRunning
-		app.targetMu.Unlock()
-		if running {
+		if app.isTargetRunning() {
 			app.onTargetStop()
-		} else {
-			_ = app.onTargetStart()
+			return
 		}
+		if err := app.onTargetStart(); err != nil {
+			app.showTrayBalloon("启动本机被控失败", err.Error())
+		}
+	case TRAY_MENU_DISCONNECT:
+		app.onControllerDisconnect()
+	case TRAY_MENU_COPY_ID:
+		id := ""
+		if app.cfg != nil {
+			id = strings.TrimSpace(app.cfg.Device.ID)
+		}
+		if id == "" {
+			app.showTrayBalloon("复制失败", "还没有配置设备 ID")
+			return
+		}
+		copyTextToClipboard(id)
+		app.showTrayBalloon("已复制设备 ID", id)
+	case TRAY_MENU_AUTOSTART:
+		next := !IsAutoStartEnabled()
+		if err := SetAutoStartEnabled(next); err != nil {
+			app.showTrayBalloon("开机自启", "设置失败："+err.Error())
+			return
+		}
+		label := "未开启"
+		if next {
+			label = "已开启"
+		}
+		app.showTrayBalloon("开机自启", label)
+		app.evalJS(`(function(){var el=document.getElementById('chk-autostart');var s=document.getElementById('side-autostart-status');if(el)el.checked=` + boolJS(next) + `;if(s){s.textContent=` + jsString(label) + `;}})()`)
+	case TRAY_MENU_THEME:
+		dark := true
+		if app.cfg != nil {
+			dark = app.cfg.GUI.Theme != "light"
+		}
+		next := "dark"
+		if dark {
+			next = "light"
+		}
+		app.persistGUITheme(next)
+	case TRAY_MENU_CONFIG_DIR:
+		dir := filepath.Dir(app.configPath)
+		_ = exec.Command("explorer", dir).Start()
 	case TRAY_MENU_EXIT:
 		app.forceExit = true
 		win.SendMessage(app.hwnd, win.WM_CLOSE, 0, 0)
 	}
+}
+
+func boolJS(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
+}
+
+func jsString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+func (app *App) persistGUITheme(theme string) {
+	if theme != "light" {
+		theme = "dark"
+	}
+	if app.cfg == nil {
+		app.ensureConfigFile()
+	}
+	if app.cfg == nil {
+		return
+	}
+	app.cfg.GUI.Theme = theme
+	if data, err := yaml.Marshal(app.cfg); err == nil {
+		_ = os.MkdirAll(filepath.Dir(app.configPath), 0755)
+		_ = os.WriteFile(app.configPath, data, 0644)
+	}
+	app.evalJS("applyTheme(" + boolJS(theme == "dark") + ", false)")
+}
+
+func (app *App) evalJS(script string) {
+	if app.w == nil {
+		return
+	}
+	app.w.Dispatch(func() {
+		defer func() { _ = recover() }()
+		if app.w != nil {
+			app.w.Eval(script)
+		}
+	})
 }
 
 func (app *App) showTrayBalloon(title, info string) {
@@ -782,15 +920,6 @@ func (app *App) showTrayBalloon(title, info string) {
 	copy(nid.SzInfoTitle[:], windows.StringToUTF16(title))
 	copy(nid.SzInfo[:], windows.StringToUTF16(info))
 	win.Shell_NotifyIcon(win.NIM_MODIFY, &nid)
-}
-
-func appendMenu(hMenu win.HMENU, flags uint32, id uintptr, text string) {
-	if text == "" {
-		procAppendMenuW.Call(uintptr(hMenu), uintptr(flags), id, 0)
-	} else {
-		ptr, _ := windows.UTF16PtrFromString(text)
-		procAppendMenuW.Call(uintptr(hMenu), uintptr(flags), id, uintptr(unsafe.Pointer(ptr)))
-	}
 }
 
 func (app *App) cleanup() {

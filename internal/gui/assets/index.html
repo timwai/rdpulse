@@ -5,477 +5,529 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RDPulse 远程桌面穿透</title>
   <script src="tailwind.js"></script>
+  <script>
+    // The Play CDN defaults to darkMode:'media', which would tie every `dark:`
+    // utility to the OS setting and leave the in-app theme toggle inert.
+    tailwind.config = { darkMode: 'class' };
+  </script>
   <style>
+    :root {
+      --ease: cubic-bezier(0.2, 0, 0, 1);
+    }
     body {
-      font-family: 'Segoe UI Variable Display', 'Segoe UI Variable Text', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+      font-family: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Microsoft YaHei UI', sans-serif;
       user-select: none;
       -webkit-font-smoothing: antialiased;
       overflow: hidden;
+      font-size: 13px;
     }
-    .code-font {
-      font-family: 'Cascadia Code', 'Consolas', 'Fira Code', monospace;
+    .mono {
+      font-family: 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
+      font-variant-ligatures: none;
     }
-    * {
-      transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+
+    /* Scoped transitions. A global `* { transition }` repaints the whole
+       document on every theme toggle, which visibly stutters in WebView2. */
+    button, input, a, .nav-item, .card, .toggle-track {
+      transition: background-color .15s var(--ease), border-color .15s var(--ease),
+                  color .15s var(--ease), opacity .15s var(--ease);
     }
-    .mica-window {
-      backdrop-filter: blur(40px) saturate(180%);
-    }
-    ::-webkit-scrollbar { width: 5px; height: 5px; }
+
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(140, 140, 140, 0.25); border-radius: 9999px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(140, 140, 140, 0.45); }
+    ::-webkit-scrollbar-thumb { background: rgba(140, 140, 140, .28); border-radius: 9999px; border: 2px solid transparent; background-clip: content-box; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(140, 140, 140, .5); background-clip: content-box; }
 
-    @keyframes pulse-ring {
-      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); }
-      70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
-      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-    }
-    .ping-indicator {
-      animation: pulse-ring 2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+    input:focus { outline: none; }
+    button:focus-visible, input:focus-visible {
+      outline: 2px solid #3b82f6;
+      outline-offset: 1px;
     }
 
-    /* Win32 drag window region */
-    .title-drag {
-      -webkit-app-region: drag;
+    @keyframes live-ring {
+      0%   { box-shadow: 0 0 0 0 rgba(16, 185, 129, .55); }
+      70%  { box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
     }
-    .no-drag {
-      -webkit-app-region: no-drag;
+    .live-dot { animation: live-ring 2.4s var(--ease) infinite; }
+
+    .icon { width: 16px; height: 16px; stroke-width: 1.6; flex-shrink: 0; }
+    .icon-sm { width: 14px; height: 14px; stroke-width: 1.7; flex-shrink: 0; }
+    #svc-arrow { transition: transform .18s var(--ease); }
+
+    /* Nav state driven by aria-selected keeps the JS to a single attribute
+       flip instead of shuffling a dozen utility classes. Hover is defined
+       here too, otherwise the Play CDN stylesheet (injected after this one)
+       would win and grey out the selected item on hover. */
+    .nav-item:hover { background: rgb(226 232 240 / .7); }
+    .dark .nav-item:hover { background: rgb(30 41 59 / .6); }
+    .nav-item[aria-selected="true"] {
+      background: rgb(239 246 255);
+      color: rgb(37 99 235);
+      box-shadow: inset 2px 0 0 rgb(37 99 235);
     }
+    .nav-item[aria-selected="true"]:hover { background: rgb(219 234 254); }
+    .dark .nav-item[aria-selected="true"] {
+      background: rgb(30 58 138 / .3);
+      color: rgb(147 197 253);
+      box-shadow: inset 2px 0 0 rgb(96 165 250);
+    }
+    .dark .nav-item[aria-selected="true"]:hover { background: rgb(30 58 138 / .45); }
+
+    .btn-primary { background: #2563eb; color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: #1d4ed8; }
+    .btn-primary:active:not(:disabled) { background: #1e40af; }
+    /* Dimming the blue is not enough on a dark background — it still reads as
+       clickable. Drop the accent entirely instead. */
+    .btn-primary:disabled { background: rgb(226 232 240); color: rgb(148 163 184); cursor: default; }
+    .dark .btn-primary:disabled { background: rgb(51 65 85); color: rgb(100 116 139); }
+    .btn-live { background: #059669; color: #fff; cursor: default; }
+
+    .toggle-track { background: rgb(203 213 225); }
+    .dark .toggle-track { background: rgb(51 65 85); }
+    .peer:checked ~ .toggle-track { background: #2563eb; }
+    .toggle-knob { transition: transform .18s var(--ease); }
+    .peer:checked ~ .toggle-track .toggle-knob { transform: translateX(16px); }
   </style>
 </head>
-<body class="bg-slate-100 dark:bg-[#0f141c] text-slate-900 dark:text-slate-100 h-screen w-screen flex flex-col">
+<body class="bg-slate-100 dark:bg-[#0d1117] text-slate-900 dark:text-slate-100 h-screen w-screen flex flex-col">
 
-  <!-- Windows 11 Fluent Title Bar -->
-  <div class="h-10 bg-slate-50/90 dark:bg-[#131822]/90 border-b border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between px-3 select-none title-drag shrink-0">
-    <div class="flex items-center gap-2.5">
-      <div class="w-5 h-5 rounded-lg bg-gradient-to-br from-slate-900 to-blue-950 border border-cyan-500/40 flex items-center justify-center shadow-xs overflow-hidden p-0.5 shrink-0">
-        <svg viewBox="0 0 100 100" fill="none" class="w-full h-full">
-          <rect x="15" y="16" width="70" height="50" rx="6" stroke="#38BDF8" stroke-width="7" fill="#0F172A"/>
-          <path d="M42 66 L38 82 H62 L58 66" stroke="#0284C7" stroke-width="6" stroke-linecap="round"/>
-          <line x1="32" y1="82" x2="68" y2="82" stroke="#38BDF8" stroke-width="6" stroke-linecap="round"/>
-          <path d="M10 41 H32 L38 27 L48 57 L55 35 L61 46 L66 41 H90" stroke="#06B6D4" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
+  <svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden">
+    <defs>
+      <g id="i-monitor" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+      </g>
+      <g id="i-shield" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3l8 3v6c0 4.4-3.2 8.3-8 9.3-4.8-1-8-4.9-8-9.3V6z"/><path d="M9 12l2 2 4-4"/>
+      </g>
+      <g id="i-settings" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3.2"/>
+        <path d="M12 2.6v3M12 18.4v3M21.4 12h-3M5.6 12h-3M18.6 5.4l-2.1 2.1M7.5 16.5l-2.1 2.1M18.6 18.6l-2.1-2.1M7.5 7.5L5.4 5.4"/>
+      </g>
+      <g id="i-terminal" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/>
+      </g>
+      <g id="i-copy" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 01-1-1V4a1 1 0 011-1h10a1 1 0 011 1v1"/>
+      </g>
+      <g id="i-play" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 4l14 8-14 8z"/>
+      </g>
+      <g id="i-stop" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="5" y="5" width="14" height="14" rx="2"/>
+      </g>
+      <g id="i-bolt" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M13 2L4 14h7l-1 8 9-12h-7z"/>
+      </g>
+      <g id="i-check" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 12l5 5L20 6"/>
+      </g>
+      <g id="i-folder" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
+      </g>
+      <g id="i-refresh" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 11a8 8 0 10-2.3 6.3M20 5v6h-6"/>
+      </g>
+      <g id="i-save" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><path d="M8 21v-7h8v7M8 3v5h6"/>
+      </g>
+      <g id="i-trash" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/>
+      </g>
+      <g id="i-dice" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="15.5" cy="15.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+      </g>
+      <g id="i-chevron" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 9l6 6 6-6"/>
+      </g>
+    </defs>
+  </svg>
+
+  <div class="flex-1 flex min-h-0">
+
+    <!-- Sidebar -->
+    <nav class="w-[188px] bg-white/60 dark:bg-[#131a26]/60 border-r border-slate-200 dark:border-slate-800 flex flex-col shrink-0">
+      <div class="flex-1 p-2 space-y-0.5">
+        <button onclick="switchTab('controller')" id="tab-btn-controller" aria-selected="true"
+                class="nav-item w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] font-medium text-slate-600 dark:text-slate-400">
+          <svg class="icon" viewBox="0 0 24 24"><use href="#i-monitor"/></svg>
+          <span>远程连接</span>
+        </button>
+        <button onclick="switchTab('target')" id="tab-btn-target" aria-selected="false"
+                class="nav-item w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] font-medium text-slate-600 dark:text-slate-400">
+          <svg class="icon" viewBox="0 0 24 24"><use href="#i-shield"/></svg>
+          <span>本机被控</span>
+        </button>
+        <button onclick="switchTab('settings')" id="tab-btn-settings" aria-selected="false"
+                class="nav-item w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] font-medium text-slate-600 dark:text-slate-400">
+          <svg class="icon" viewBox="0 0 24 24"><use href="#i-settings"/></svg>
+          <span>连接设置</span>
+        </button>
+        <button onclick="switchTab('logs')" id="tab-btn-logs" aria-selected="false"
+                class="nav-item w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] font-medium text-slate-600 dark:text-slate-400">
+          <svg class="icon" viewBox="0 0 24 24"><use href="#i-terminal"/></svg>
+          <span>运行日志</span>
+        </button>
       </div>
-      <span class="text-xs font-semibold tracking-wide text-slate-800 dark:text-slate-200">RDPulse 远程桌面穿透</span>
-      <span class="text-[10px] text-slate-400 dark:text-slate-500 font-mono">v1.2.0</span>
-    </div>
 
-    <!-- Window Control Buttons -->
-    <div class="flex items-center h-full -mr-3 no-drag">
-      <button onclick="window.goToggleTheme && window.goToggleTheme()" class="px-2.5 h-10 flex items-center justify-center text-slate-500 hover:bg-slate-200/60 dark:hover:bg-slate-800 text-xs transition-colors" title="切换深浅主题">
-        <span id="theme-btn-icon">🌙</span>
-      </button>
-      <button onclick="window.goMinimizeWindow && window.goMinimizeWindow()" class="w-11 h-10 flex items-center justify-center text-slate-500 hover:bg-slate-200/60 dark:hover:bg-slate-800 text-xs transition-colors" title="最小化">
-        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2" d="M20 12H4"/></svg>
-      </button>
-      <button onclick="window.goCloseWindow && window.goCloseWindow()" class="w-11 h-10 flex items-center justify-center text-slate-500 hover:bg-red-500 hover:text-white text-xs transition-colors" title="关闭 (最小化至系统托盘)">
-        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-      </button>
-    </div>
-  </div>
-
-  <!-- Main Body: Sidebar + Workspace -->
-  <div class="flex-1 flex flex-col md:flex-row overflow-hidden">
-
-    <!-- Left Sidebar -->
-    <div class="w-full md:w-56 bg-slate-50/50 dark:bg-[#151a24]/60 border-r border-slate-200/70 dark:border-slate-800/80 p-3 flex flex-col justify-between shrink-0">
-      <div class="space-y-1">
-        <div class="text-[10px] font-bold text-slate-400 dark:text-slate-500 px-3 py-1 uppercase tracking-wider">功能导航</div>
-
-        <button onclick="switchTab('controller')" id="tab-btn-controller" class="nav-item w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10 border border-blue-500/20 shadow-xs">
-          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
-          <span>远程桌面连接</span>
-        </button>
-
-        <button onclick="switchTab('target')" id="tab-btn-target" class="nav-item w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200 border border-transparent">
-          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-          <span>本机受控管理</span>
-        </button>
-
-        <button onclick="switchTab('settings')" id="tab-btn-settings" class="nav-item w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200 border border-transparent">
-          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-          <span>参数配置 (Settings)</span>
-        </button>
-
-        <button onclick="switchTab('logs')" id="tab-btn-logs" class="nav-item w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200 border border-transparent">
-          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-          <span>实时系统日志</span>
-        </button>
-      </div>
-
-      <!-- Bottom Health Mini Card -->
-      <div class="p-3 bg-white/70 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/50 rounded-xl space-y-2">
-        <div class="flex items-center justify-between text-[11px]">
-          <span class="text-slate-500 dark:text-slate-400">本地 3389 端口</span>
-          <span id="side-rdp-status" class="flex items-center gap-1.5 font-medium text-emerald-600 dark:text-emerald-400">
-            <span class="w-2 h-2 rounded-full bg-emerald-500 ping-indicator"></span>
-            正常监听
-          </span>
-        </div>
-        <div class="flex items-center justify-between text-[11px]">
-          <span class="text-slate-500 dark:text-slate-400">开机自启常驻</span>
-          <span id="side-autostart-status" class="text-blue-600 dark:text-blue-400 font-medium">已激活</span>
-        </div>
-        <div class="w-full bg-slate-200/70 dark:bg-slate-700/60 h-1 rounded-full overflow-hidden">
-          <div class="bg-gradient-to-r from-blue-500 to-emerald-400 h-full w-full"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Right Workspace Area -->
-    <div class="flex-1 p-5 overflow-y-auto space-y-4">
-
-      <!-- ================= TAB 1: CONTROLLER ================= -->
-      <div id="tab-pane-controller" class="tab-pane space-y-4">
-        <!-- Target Info Box -->
-        <div class="bg-white/80 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700/60 rounded-2xl p-4 sm:p-5 shadow-sm space-y-3">
-          <div class="flex items-center justify-between">
-            <div>
-              <h2 class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                <span>🎯</span> 目标受控设备 (Target Device)
-              </h2>
-            </div>
-            <span class="px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900">
-              P2P 竞速穿透
+      <div class="m-2 space-y-2">
+        <div class="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 space-y-2">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-[12px] text-slate-500 dark:text-slate-400">本机 3389</span>
+            <span id="side-rdp-status" class="flex items-center gap-1.5 text-[12px] font-medium text-emerald-600 dark:text-emerald-400">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 live-dot"></span>正常
             </span>
           </div>
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-[12px] text-slate-500 dark:text-slate-400">开机自启</span>
+            <span id="side-autostart-status" class="text-[12px] font-medium text-slate-500 dark:text-slate-400">未开启</span>
+          </div>
+        </div>
+        <button onclick="toggleTheme()" class="w-full px-3 py-1.5 rounded-md text-[12px] font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-200/70 dark:hover:bg-slate-800/60 flex items-center justify-center gap-1.5">
+          <span id="theme-btn-icon">☾</span>
+          <span id="theme-btn-label">深色</span>
+        </button>
+      </div>
+    </nav>
 
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div class="sm:col-span-2">
-              <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">远程受控端 Device ID</label>
-              <div class="relative">
-                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
-                </div>
-                <input id="ctrl-target-id" type="text" placeholder="例如: home-office-pc" class="w-full text-xs pl-9 pr-3 py-2 bg-slate-50/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-1 focus:ring-blue-500 font-mono font-medium">
+    <!-- Workspace -->
+    <main class="flex-1 min-w-0 min-h-0 overflow-hidden">
+
+      <!-- ============ 远程连接 ============ -->
+      <section id="tab-pane-controller" class="tab-pane h-full overflow-y-auto px-6 py-4 space-y-4">
+        <div>
+          <h1 class="text-[15px] font-semibold text-slate-900 dark:text-white">远程连接</h1>
+          <p class="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">输入对方的设备 ID，连通后自动打开 Windows 远程桌面。</p>
+        </div>
+
+        <!-- Primary action -->
+        <div class="card bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 rounded-lg p-4 space-y-3">
+          <div class="flex items-end gap-2.5">
+            <div class="flex-1 min-w-0">
+              <label for="ctrl-target-id" class="block text-[12px] font-medium text-slate-600 dark:text-slate-300 mb-1.5">目标设备 ID</label>
+              <input id="ctrl-target-id" type="text" placeholder="office-pc" autocomplete="off"
+                     class="mono w-full text-[14px] px-3 py-2.5 bg-slate-50 dark:bg-slate-900/70 border border-slate-300 dark:border-slate-700 rounded-md focus:border-blue-500 dark:focus:border-blue-500">
+            </div>
+            <button id="ctrl-connect-btn" onclick="doConnect()"
+                    class="btn-primary h-[42px] px-5 rounded-md font-semibold text-[13px] flex items-center justify-center gap-2 whitespace-nowrap">
+              <svg class="icon-sm" viewBox="0 0 24 24"><use href="#i-bolt"/></svg>
+              <span id="ctrl-connect-text">连接</span>
+            </button>
+            <button id="ctrl-disconnect-btn" onclick="doDisconnect()" disabled
+                    class="h-[42px] px-4 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-[13px] font-medium text-slate-600 dark:text-slate-300 opacity-50 cursor-not-allowed whitespace-nowrap">
+              断开
+            </button>
+          </div>
+
+          <div id="recent-row" class="flex items-center gap-2 flex-wrap hidden">
+            <span class="text-[12px] text-slate-400 dark:text-slate-500">最近</span>
+            <div id="recent-list" class="flex items-center gap-1.5 flex-wrap"></div>
+          </div>
+        </div>
+
+        <!-- Link status -->
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <h2 class="text-[13px] font-semibold text-slate-700 dark:text-slate-200">链路状态</h2>
+            <span id="ctrl-session-badge"
+                  class="px-2 py-0.5 rounded text-[12px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">未连接</span>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="card bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 rounded-lg p-3">
+              <div class="text-[12px] text-slate-500 dark:text-slate-400">键鼠 / 窗口 · TCP</div>
+              <div id="ctrl-tcp-path" class="text-[14px] font-semibold text-slate-400 dark:text-slate-500 mt-1">未连接</div>
+              <div id="ctrl-tcp-raw" class="mono text-[11px] text-slate-400 dark:text-slate-600 mt-0.5">&nbsp;</div>
+            </div>
+            <div class="card bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 rounded-lg p-3">
+              <div class="text-[12px] text-slate-500 dark:text-slate-400">画面 / 音频 · UDP</div>
+              <div id="ctrl-udp-path" class="text-[14px] font-semibold text-slate-400 dark:text-slate-500 mt-1">未连接</div>
+              <div id="ctrl-udp-raw" class="mono text-[11px] text-slate-400 dark:text-slate-600 mt-0.5">&nbsp;</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Options -->
+        <div>
+          <h2 class="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-2">连接选项</h2>
+          <div class="card bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 rounded-lg divide-y divide-slate-200 dark:divide-slate-700/60">
+            <div class="flex items-center justify-between gap-4 px-4 py-2.5">
+              <div class="min-w-0">
+                <div class="text-[13px] font-medium text-slate-800 dark:text-slate-100">连通后自动打开远程桌面</div>
+                <div class="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">关闭后可手动连 <span class="mono">127.0.0.1:13389</span></div>
               </div>
+              <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                <input type="checkbox" id="ctrl-auto-mstsc" checked class="sr-only peer">
+                <span class="toggle-track w-9 h-5 rounded-full flex items-center px-0.5">
+                  <span class="toggle-knob w-4 h-4 rounded-full bg-white shadow-sm"></span>
+                </span>
+              </label>
             </div>
-            <div>
-              <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">本地代理端口 (mstsc 目标)</label>
-              <input id="ctrl-proxy-port" type="text" value="127.0.0.1:13389" class="w-full text-xs px-3 py-2 bg-slate-50/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-1 focus:ring-blue-500 font-mono">
+            <div class="flex items-center justify-between gap-4 px-4 py-2.5">
+              <div class="min-w-0">
+                <div class="text-[13px] font-medium text-slate-800 dark:text-slate-100">强制走中继</div>
+                <div class="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">跳过打洞。直连不稳定时用它排查</div>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                <input type="checkbox" id="ctrl-force-relay" class="sr-only peer">
+                <span class="toggle-track w-9 h-5 rounded-full flex items-center px-0.5">
+                  <span class="toggle-knob w-4 h-4 rounded-full bg-white shadow-sm"></span>
+                </span>
+              </label>
             </div>
-          </div>
-
-          <!-- Quick Fill Chips -->
-          <div class="flex items-center gap-2 pt-0.5">
-            <span class="text-[11px] text-slate-400">快捷填入:</span>
-            <button onclick="fillTarget('home-office-pc')" class="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-700/60 hover:bg-blue-50 dark:hover:bg-blue-900/40 text-[11px] font-mono text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600 transition-colors">
-              home-office-pc
-            </button>
-            <button onclick="fillTarget('my-pc')" class="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-700/60 hover:bg-blue-50 dark:hover:bg-blue-900/40 text-[11px] font-mono text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600 transition-colors">
-              my-pc
-            </button>
-          </div>
-        </div>
-
-        <!-- Options: Win11 Toggle Switches -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div class="bg-white/80 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700/60 rounded-xl p-3.5 flex items-center justify-between gap-3">
-            <div>
-              <div class="text-xs font-semibold text-slate-900 dark:text-white">穿透成功自动拉起 mstsc.exe</div>
-              <div class="text-[11px] text-slate-500 dark:text-slate-400">隧道打通后自动唤起 Windows 远程桌面</div>
-            </div>
-            <label class="relative inline-flex items-center cursor-pointer shrink-0">
-              <input type="checkbox" id="ctrl-auto-mstsc" checked class="sr-only peer">
-              <div class="w-10 h-5 bg-slate-300 dark:bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-            </label>
-          </div>
-
-          <div class="bg-white/80 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700/60 rounded-xl p-3.5 flex items-center justify-between gap-3">
-            <div>
-              <div class="text-xs font-semibold text-slate-900 dark:text-white">强制中继模式 (禁用 P2P 直连)</div>
-              <div class="text-[11px] text-slate-500 dark:text-slate-400">遇到复杂 NAT 时跳过打洞直连</div>
-            </div>
-            <label class="relative inline-flex items-center cursor-pointer shrink-0">
-              <input type="checkbox" id="ctrl-force-relay" class="sr-only peer">
-              <div class="w-10 h-5 bg-slate-300 dark:bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-            </label>
-          </div>
-        </div>
-
-        <!-- Diagnostics Box -->
-        <div class="bg-white/80 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700/60 rounded-2xl p-4 space-y-2.5">
-          <div class="flex items-center justify-between">
-            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-              <span>📡</span> 链路状态与穿透诊断 (Diagnostics)
-            </h3>
-            <span id="ctrl-session-badge" class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
-              未连接 (就绪)
-            </span>
-          </div>
-
-          <div class="grid grid-cols-2 gap-3 text-xs">
-            <div class="bg-slate-50/80 dark:bg-slate-900/60 p-2.5 rounded-xl border border-slate-200/60 dark:border-slate-800">
-              <span class="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">TCP 数据链路</span>
-              <span id="ctrl-tcp-path" class="font-mono font-bold text-slate-700 dark:text-slate-300">-</span>
-            </div>
-            <div class="bg-slate-50/80 dark:bg-slate-900/60 p-2.5 rounded-xl border border-slate-200/60 dark:border-slate-800">
-              <span class="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">UDP 数据链路</span>
-              <span id="ctrl-udp-path" class="font-mono font-bold text-slate-700 dark:text-slate-300">-</span>
+            <div class="flex items-center justify-between gap-4 px-4 py-2.5">
+              <div class="min-w-0">
+                <div class="text-[13px] font-medium text-slate-800 dark:text-slate-100">本地代理地址</div>
+                <div class="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">远程桌面实际连接的本机端口</div>
+              </div>
+              <input id="ctrl-proxy-port" type="text" value="127.0.0.1:13389"
+                     class="mono w-[168px] text-[12px] px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900/70 border border-slate-300 dark:border-slate-700 rounded-md focus:border-blue-500 shrink-0">
             </div>
           </div>
         </div>
+      </section>
 
-        <!-- Action Buttons -->
-        <div class="flex items-center gap-3 pt-1">
-          <button id="ctrl-connect-btn" onclick="doConnect()" class="flex-1 py-3 px-5 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-600 hover:from-blue-700 hover:to-indigo-700 active:scale-[0.99] text-white font-bold text-xs shadow-md shadow-blue-500/25 flex items-center justify-center gap-2 transition-all">
-            <span>⚡</span>
-            <span id="ctrl-connect-text">一键连接远程桌面 (P2P 竞速穿透)</span>
-          </button>
-          <button id="ctrl-disconnect-btn" onclick="doDisconnect()" disabled class="py-3 px-6 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-400 font-medium text-xs opacity-50 cursor-not-allowed transition-all">
-            ⏹ 断开连接
-          </button>
+      <!-- ============ 本机被控 ============ -->
+      <section id="tab-pane-target" class="tab-pane hidden h-full overflow-y-auto px-6 py-4 space-y-4">
+        <div>
+          <h1 class="text-[15px] font-semibold text-slate-900 dark:text-white">本机被控</h1>
+          <p class="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">把这台电脑挂到中继上，别人用下面的设备 ID 连你。</p>
         </div>
-      </div>
 
-      <!-- ================= TAB 2: TARGET ================= -->
-      <div id="tab-pane-target" class="tab-pane hidden space-y-4">
-        <!-- Hero Identity Card -->
-        <div class="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl p-4 sm:p-5 text-white shadow-lg shadow-blue-600/20 space-y-3">
-          <div class="flex items-center justify-between">
-            <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-white/20 tracking-wider uppercase">
-              本机受控凭证 (Target Identity)
-            </span>
-            <span id="target-state-badge" class="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-400/20 text-emerald-200 border border-emerald-400/30 flex items-center gap-1.5">
-              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-              未启动
-            </span>
-          </div>
-
-          <div class="flex flex-col sm:flex-row sm:items-baseline justify-between gap-2">
-            <div>
-              <span class="text-xs text-blue-100 block">本机受控 Device ID (远端连您时填入):</span>
-              <div class="text-xl font-mono font-extrabold tracking-tight mt-0.5 flex items-center gap-2">
-                <span id="target-id-display">-</span>
-                <button onclick="copyTargetID()" class="text-xs bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded transition-colors" title="复制设备 ID">
-                  📋 复制 ID
+        <div class="card bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 rounded-lg p-4 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <div class="min-w-0">
+              <div class="text-[12px] text-slate-500 dark:text-slate-400">本机设备 ID</div>
+              <div class="flex items-center gap-2 mt-1">
+                <span id="target-id-display" class="mono text-[20px] font-semibold text-slate-900 dark:text-white truncate">-</span>
+                <button onclick="copyTargetID()" title="复制设备 ID"
+                        class="p-1.5 rounded text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-700/60 shrink-0">
+                  <svg class="icon-sm" viewBox="0 0 24 24"><use href="#i-copy"/></svg>
                 </button>
               </div>
+              <div class="text-[12px] text-slate-500 dark:text-slate-400 mt-1.5">
+                转发到 <span id="target-rdp-addr-display" class="mono text-slate-600 dark:text-slate-300">127.0.0.1:3389</span>
+              </div>
             </div>
-            <div>
-              <span class="text-[11px] text-blue-100">受控 RDP 目标:</span>
-              <span id="target-rdp-addr-display" class="text-xs font-mono font-bold block">127.0.0.1:3389</span>
-            </div>
+            <span id="target-state-badge"
+                  class="px-2.5 py-1 rounded text-[12px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 flex items-center gap-1.5 shrink-0">
+              <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>未启动
+            </span>
           </div>
 
-          <div class="pt-1 flex items-center gap-2.5">
-            <button id="target-start-btn" onclick="doStartTarget()" class="flex-1 py-2 px-4 rounded-xl bg-white text-blue-700 hover:bg-blue-50 font-bold text-xs shadow transition-all flex items-center justify-center gap-1.5">
-              <span>▶</span>
-              <span id="target-start-text">启动前台被控监听 (即开即用)</span>
+          <div class="flex items-center gap-2.5">
+            <button id="target-start-btn" onclick="doStartTarget()"
+                    class="btn-primary flex-1 h-9 rounded-md font-semibold text-[13px] flex items-center justify-center gap-2">
+              <svg class="icon-sm" viewBox="0 0 24 24"><use href="#i-play"/></svg>
+              <span id="target-start-text">启动被控</span>
             </button>
-            <button id="target-stop-btn" onclick="doStopTarget()" disabled class="py-2 px-5 rounded-xl bg-black/25 text-white text-xs font-semibold border border-white/20 opacity-50 cursor-not-allowed transition-all">
-              ⏹ 停止监听
+            <button id="target-stop-btn" onclick="doStopTarget()" disabled
+                    class="h-9 px-4 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-[13px] font-medium text-slate-600 dark:text-slate-300 opacity-50 cursor-not-allowed flex items-center gap-2">
+              <svg class="icon-sm" viewBox="0 0 24 24"><use href="#i-stop"/></svg>
+              <span>停止</span>
             </button>
           </div>
         </div>
 
-        <!-- Autostart & Tray Resident Box -->
-        <div class="bg-white/80 dark:bg-slate-800/50 border-2 border-blue-500/40 dark:border-blue-500/50 rounded-2xl p-4 shadow-sm space-y-3">
-          <div class="flex items-center justify-between border-b border-slate-200/80 dark:border-slate-700/60 pb-2.5">
-            <div>
-              <h3 class="text-xs font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
-                <span>🌟</span> 开机自启与系统托盘后台常驻
-              </h3>
-              <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">普通用户零特权勾选，开机自动静默常驻，无需配置复杂的 Windows 系统服务</p>
-            </div>
-            <span class="px-2 py-0.5 text-[10px] font-bold bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 rounded">零特权</span>
-          </div>
-
-          <div class="space-y-2.5 pt-0.5">
-            <div class="flex items-center justify-between py-1">
-              <div>
-                <div class="text-xs font-semibold text-slate-900 dark:text-white">随电脑登录开机自动启动</div>
-                <div class="text-[11px] text-slate-500 dark:text-slate-400">写入当前用户注册表 Run，开机以 <code class="text-[10px] font-mono">--minimized</code> 模式静默启动到托盘</div>
+        <div>
+          <h2 class="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-2">后台常驻</h2>
+          <div class="card bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 rounded-lg divide-y divide-slate-200 dark:divide-slate-700/60">
+            <div class="flex items-center justify-between gap-4 px-4 py-2.5">
+              <div class="min-w-0">
+                <div class="text-[13px] font-medium text-slate-800 dark:text-slate-100">开机自动启动</div>
+                <div class="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">登录后静默启动到托盘，不需要管理员权限</div>
               </div>
               <label class="relative inline-flex items-center cursor-pointer shrink-0">
                 <input type="checkbox" id="chk-autostart" onchange="onToggleAutostart(this)" class="sr-only peer">
-                <div class="w-10 h-5 bg-slate-300 dark:bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                <span class="toggle-track w-9 h-5 rounded-full flex items-center px-0.5">
+                  <span class="toggle-knob w-4 h-4 rounded-full bg-white shadow-sm"></span>
+                </span>
               </label>
             </div>
-
-            <div class="flex items-center justify-between py-1">
-              <div>
-                <div class="text-xs font-semibold text-slate-900 dark:text-white">启动后自动开启本机被控监听</div>
-                <div class="text-[11px] text-slate-500 dark:text-slate-400">开机后远端随时可直接发起连接，被控电脑前无需任何人工值守操作</div>
+            <div class="flex items-center justify-between gap-4 px-4 py-2.5">
+              <div class="min-w-0">
+                <div class="text-[13px] font-medium text-slate-800 dark:text-slate-100">启动后自动开启被控</div>
+                <div class="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">开机即可被连接，被控这端无需有人操作</div>
               </div>
               <label class="relative inline-flex items-center cursor-pointer shrink-0">
                 <input type="checkbox" id="chk-auto-listen" onchange="onToggleAutoListen(this)" class="sr-only peer">
-                <div class="w-10 h-5 bg-slate-300 dark:bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                <span class="toggle-track w-9 h-5 rounded-full flex items-center px-0.5">
+                  <span class="toggle-knob w-4 h-4 rounded-full bg-white shadow-sm"></span>
+                </span>
               </label>
             </div>
-
-            <div class="flex items-center justify-between py-1">
-              <div>
-                <div class="text-xs font-semibold text-slate-900 dark:text-white">关闭窗口时最小化到系统右下角托盘</div>
-                <div class="text-[11px] text-slate-500 dark:text-slate-400">拦截右上角关闭 <code class="text-[10px] font-mono">X</code> 按钮，保持后台长连接与打洞监听</div>
+            <div class="flex items-center justify-between gap-4 px-4 py-2.5">
+              <div class="min-w-0">
+                <div class="text-[13px] font-medium text-slate-800 dark:text-slate-100">关闭窗口时最小化到托盘</div>
+                <div class="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">保持后台连接。彻底退出请用托盘菜单</div>
               </div>
               <label class="relative inline-flex items-center cursor-pointer shrink-0">
                 <input type="checkbox" id="chk-min-tray" onchange="onToggleMinTray(this)" class="sr-only peer">
-                <div class="w-10 h-5 bg-slate-300 dark:bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                <span class="toggle-track w-9 h-5 rounded-full flex items-center px-0.5">
+                  <span class="toggle-knob w-4 h-4 rounded-full bg-white shadow-sm"></span>
+                </span>
               </label>
             </div>
           </div>
         </div>
 
-        <!-- Collapsible System Service -->
-        <div class="bg-white/60 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-700/60 rounded-xl p-3 space-y-2">
-          <div class="flex items-center justify-between cursor-pointer select-none text-xs font-medium text-slate-600 dark:text-slate-300" onclick="toggleServiceAccordion()">
-            <span>⚙️ 高级可选：Windows 底层系统服务 (仅限无需桌面登录的服务器场景)</span>
-            <span id="svc-arrow" class="text-slate-400">▼</span>
-          </div>
-          <div id="svc-panel" class="pt-2 border-t border-slate-200 dark:border-slate-700/60 space-y-2 hidden text-xs">
-            <div class="flex items-center justify-between">
-              <span class="text-slate-500">服务状态:</span>
-              <span id="svc-status-text" class="font-mono text-slate-400">未安装</span>
+        <div class="card bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 rounded-lg overflow-hidden">
+          <button onclick="toggleServiceAccordion()"
+                  class="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800/60">
+            <div class="min-w-0">
+              <div class="text-[13px] font-medium text-slate-800 dark:text-slate-100">安装为 Windows 服务</div>
+              <div class="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">需要管理员权限。仅无人登录的服务器场景需要</div>
+            </div>
+            <svg id="svc-arrow" class="icon text-slate-400 shrink-0" viewBox="0 0 24 24"><use href="#i-chevron"/></svg>
+          </button>
+          <div id="svc-panel" class="hidden px-4 pb-3 pt-1 border-t border-slate-200 dark:border-slate-700/60 space-y-2.5">
+            <div class="flex items-center justify-between text-[12px] pt-1.5">
+              <span class="text-slate-500 dark:text-slate-400">服务状态</span>
+              <span id="svc-status-text" class="mono text-slate-500 dark:text-slate-400">未安装</span>
             </div>
             <div class="flex flex-wrap gap-2">
-              <button onclick="doServiceAction('install')" class="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-xs">安装服务</button>
-              <button onclick="doServiceAction('start')" class="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-xs">启动服务</button>
-              <button onclick="doServiceAction('stop')" class="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-xs">停止服务</button>
-              <button onclick="doServiceAction('uninstall')" class="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-xs">卸载服务</button>
+              <button onclick="doServiceAction('install')" class="px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-[12px] font-medium">安装</button>
+              <button onclick="doServiceAction('start')" class="px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-[12px] font-medium">启动</button>
+              <button onclick="doServiceAction('stop')" class="px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-[12px] font-medium">停止</button>
+              <button onclick="doServiceAction('uninstall')" class="px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-[12px] font-medium text-rose-600 dark:text-rose-400">卸载</button>
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      <!-- ================= TAB 3: SETTINGS ================= -->
-      <div id="tab-pane-settings" class="tab-pane hidden space-y-4">
-        <!-- Config Path Banner -->
-        <div class="bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/60 rounded-xl p-3 flex items-center justify-between gap-3">
-          <div class="min-w-0">
-            <span class="text-[10px] font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide block">当前配置文件路径 (自动寻址)</span>
-            <span id="cfg-path-display" class="text-xs font-mono text-slate-700 dark:text-slate-300 truncate block mt-0.5">~/.rdpulse/agent.yaml</span>
+      <!-- ============ 连接设置 ============ -->
+      <section id="tab-pane-settings" class="tab-pane hidden h-full overflow-y-auto px-6 py-4 space-y-4">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h1 class="text-[15px] font-semibold text-slate-900 dark:text-white">连接设置</h1>
+            <p id="cfg-path-display" class="mono text-[12px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">~/.rdpulse/agent.yaml</p>
           </div>
-          <button onclick="window.goOpenConfigDir && window.goOpenConfigDir()" class="px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-200 shadow-xs flex items-center gap-1.5 whitespace-nowrap">
-            <span>📂</span> 打开所在目录
+          <button onclick="window.goOpenConfigDir && window.goOpenConfigDir()"
+                  class="px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-[12px] font-medium flex items-center gap-1.5 shrink-0">
+            <svg class="icon-sm" viewBox="0 0 24 24"><use href="#i-folder"/></svg>打开目录
           </button>
         </div>
 
-        <!-- Relay & Signaling -->
-        <div class="bg-white/80 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700/60 rounded-2xl p-4 space-y-3">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">中继与信令配置</h3>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <h2 class="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-2">中继服务器</h2>
+          <div class="card bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 rounded-lg p-4 grid grid-cols-2 gap-4">
             <div>
-              <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">中继服务器地址 (QUIC)</label>
-              <input id="cfg-server-addr" type="text" class="w-full text-xs px-3 py-2 bg-slate-50/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-1 focus:ring-blue-500 font-mono">
+              <label for="cfg-server-addr" class="block text-[12px] font-medium text-slate-600 dark:text-slate-300 mb-1.5">中继地址</label>
+              <input id="cfg-server-addr" type="text" placeholder="relay.example.com:443"
+                     class="mono w-full text-[13px] px-3 py-2 bg-slate-50 dark:bg-slate-900/70 border border-slate-300 dark:border-slate-700 rounded-md focus:border-blue-500">
             </div>
             <div>
-              <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Rendezvous 探测地址 (UDP)</label>
-              <input id="cfg-rdzv-addr" type="text" class="w-full text-xs px-3 py-2 bg-slate-50/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-1 focus:ring-blue-500 font-mono">
+              <label for="cfg-rdzv-addr" class="block text-[12px] font-medium text-slate-600 dark:text-slate-300 mb-1.5">打洞探测地址</label>
+              <input id="cfg-rdzv-addr" type="text" placeholder="relay.example.com:21116"
+                     class="mono w-full text-[13px] px-3 py-2 bg-slate-50 dark:bg-slate-900/70 border border-slate-300 dark:border-slate-700 rounded-md focus:border-blue-500">
             </div>
           </div>
         </div>
 
-        <!-- Device Identity & Secret -->
-        <div class="bg-white/80 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700/60 rounded-2xl p-4 space-y-3">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">设备身份与通信密钥</h3>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">本机设备 Device ID</label>
-              <input id="cfg-device-id" type="text" class="w-full text-xs px-3 py-2 bg-slate-50/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-1 focus:ring-blue-500 font-mono">
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">本地受控 RDP 服务地址</label>
-              <input id="cfg-rdp-addr" type="text" class="w-full text-xs px-3 py-2 bg-slate-50/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-1 focus:ring-blue-500 font-mono">
+        <div>
+          <h2 class="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-2">本机身份</h2>
+          <div class="card bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 rounded-lg p-4 space-y-4">
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label for="cfg-device-id" class="block text-[12px] font-medium text-slate-600 dark:text-slate-300 mb-1.5">设备 ID</label>
+                <input id="cfg-device-id" type="text" placeholder="office-pc"
+                       class="mono w-full text-[13px] px-3 py-2 bg-slate-50 dark:bg-slate-900/70 border border-slate-300 dark:border-slate-700 rounded-md focus:border-blue-500">
+              </div>
+              <div>
+                <label for="cfg-rdp-addr" class="block text-[12px] font-medium text-slate-600 dark:text-slate-300 mb-1.5">本机 RDP 地址</label>
+                <input id="cfg-rdp-addr" type="text" placeholder="127.0.0.1:3389"
+                       class="mono w-full text-[13px] px-3 py-2 bg-slate-50 dark:bg-slate-900/70 border border-slate-300 dark:border-slate-700 rounded-md focus:border-blue-500">
+              </div>
             </div>
 
-            <div class="sm:col-span-2">
-              <div class="flex items-center justify-between mb-1">
-                <label class="text-xs font-semibold text-slate-600 dark:text-slate-300">安全密钥 Device Secret (至少 32 字节)</label>
-                <button onclick="generateRandomSecret()" class="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 font-medium">
-                  <span>🎲</span> 随机生成新密钥
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label for="cfg-secret" class="text-[12px] font-medium text-slate-600 dark:text-slate-300">设备密钥<span class="text-slate-400 dark:text-slate-500 font-normal"> · 至少 32 字节</span></label>
+                <button onclick="generateRandomSecret()" class="text-[12px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 font-medium">
+                  <svg class="icon-sm" viewBox="0 0 24 24"><use href="#i-dice"/></svg>随机生成
                 </button>
               </div>
               <div class="relative">
-                <input id="cfg-secret" type="password" class="w-full text-xs pl-3 pr-16 py-2 bg-slate-50/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-1 focus:ring-blue-500 font-mono">
-                <button onclick="toggleSecretVisibility()" class="absolute right-2 top-1.5 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 px-2 py-0.5 rounded">
+                <input id="cfg-secret" type="password"
+                       class="mono w-full text-[13px] pl-3 pr-16 py-2 bg-slate-50 dark:bg-slate-900/70 border border-slate-300 dark:border-slate-700 rounded-md focus:border-blue-500">
+                <button onclick="toggleSecretVisibility()" class="absolute right-1.5 top-1/2 -translate-y-1/2 text-[12px] text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 px-2 py-1 rounded">
                   <span id="secret-visibility-text">显示</span>
                 </button>
               </div>
             </div>
 
-            <div class="sm:col-span-2">
-              <div class="flex items-center justify-between mb-1">
-                <label class="text-xs font-semibold text-slate-600 dark:text-slate-300">
-                  首次入网邀请码 Enrollment Token <span class="text-[11px] font-normal text-slate-400 dark:text-slate-400">(可选)</span>
-                </label>
-                <span class="text-[11px] text-blue-600 dark:text-blue-400">仅新设备首次入网或换密时需要</span>
-              </div>
+            <div>
+              <label for="cfg-enrollment-token" class="block text-[12px] font-medium text-slate-600 dark:text-slate-300 mb-1.5">
+                邀请码<span class="text-slate-400 dark:text-slate-500 font-normal"> · 仅首次注册需要</span>
+              </label>
               <div class="relative">
-                <input id="cfg-enrollment-token" type="password" placeholder="首次入网时填入服务端生成的邀请 Token，日常运行可留空" class="w-full text-xs pl-3 pr-16 py-2 bg-slate-50/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-1 focus:ring-blue-500 font-mono">
-                <button onclick="toggleTokenVisibility()" class="absolute right-2 top-1.5 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 px-2 py-0.5 rounded">
+                <input id="cfg-enrollment-token" type="password" placeholder="首次注册后请清空"
+                       class="mono w-full text-[13px] pl-3 pr-16 py-2 bg-slate-50 dark:bg-slate-900/70 border border-slate-300 dark:border-slate-700 rounded-md focus:border-blue-500">
+                <button onclick="toggleTokenVisibility()" class="absolute right-1.5 top-1/2 -translate-y-1/2 text-[12px] text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 px-2 py-1 rounded">
                   <span id="token-visibility-text">显示</span>
                 </button>
               </div>
-              <p class="text-[11px] text-slate-400 dark:text-slate-500 mt-1">💡 提示：若追求最简操作，此项可直接留空，只需将服务端邀请 Token 填入上方 Secret 即可全自动激活入网。</p>
+              <p class="text-[12px] text-slate-500 dark:text-slate-400 mt-1.5">注册成功后清空并重启，避免邀请码长期留在配置文件里。</p>
             </div>
           </div>
         </div>
 
-        <!-- Save Actions -->
-        <div class="flex items-center justify-end gap-3 pt-1">
-          <button onclick="doSaveConfig()" class="py-2.5 px-6 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white font-bold text-xs shadow-md shadow-blue-500/25 transition-all flex items-center gap-2">
-            <span>💾</span> 保存配置
+        <div class="flex items-center justify-end gap-2.5">
+          <button onclick="loadConfigToUI()"
+                  class="h-9 px-4 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-[13px] font-medium flex items-center gap-2">
+            <svg class="icon-sm" viewBox="0 0 24 24"><use href="#i-refresh"/></svg>重新加载
           </button>
-          <button onclick="loadConfigToUI()" class="py-2.5 px-4 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-medium transition-all">
-            <span>🔄</span> 重新加载
+          <button onclick="doSaveConfig()" class="btn-primary h-9 px-5 rounded-md font-semibold text-[13px] flex items-center gap-2">
+            <svg class="icon-sm" viewBox="0 0 24 24"><use href="#i-save"/></svg>保存配置
           </button>
         </div>
-      </div>
+      </section>
 
-      <!-- ================= TAB 4: LOGS ================= -->
-      <div id="tab-pane-logs" class="tab-pane hidden space-y-3">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-semibold text-slate-600 dark:text-slate-300">系统运行与穿透诊断日志流</span>
-          <div class="flex items-center gap-2">
-            <button onclick="copyAllLogs()" class="px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300 transition-all">
-              📋 复制全部
+      <!-- ============ 运行日志 ============ -->
+      <section id="tab-pane-logs" class="tab-pane hidden h-full flex flex-col px-6 py-4 gap-3">
+        <div class="flex items-center justify-between gap-4 shrink-0">
+          <div>
+            <h1 class="text-[15px] font-semibold text-slate-900 dark:text-white">运行日志</h1>
+            <p class="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">连接失败时，这里能看到卡在哪一步。</p>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <button onclick="copyAllLogs()" class="px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-[12px] font-medium flex items-center gap-1.5">
+              <svg class="icon-sm" viewBox="0 0 24 24"><use href="#i-copy"/></svg>复制
             </button>
-            <button onclick="clearLogs()" class="px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300 transition-all">
-              🗑️ 清空
+            <button onclick="clearLogs()" class="px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-[12px] font-medium flex items-center gap-1.5">
+              <svg class="icon-sm" viewBox="0 0 24 24"><use href="#i-trash"/></svg>清空
             </button>
           </div>
         </div>
-
-        <div class="bg-[#0b0f17] text-emerald-400 font-mono text-[11px] p-4 rounded-xl h-[360px] overflow-y-auto space-y-1 shadow-inner border border-slate-800" id="log-console">
-          <div class="text-slate-500 font-mono">[System] RDPulse Native Embedded GUI started</div>
+        <div id="log-console"
+             class="mono flex-1 min-h-0 overflow-y-auto bg-[#0b0f17] border border-slate-800 rounded-lg p-3.5 text-[12px] leading-[1.65] space-y-0.5">
+          <div class="text-slate-500">[System] RDPulse 已启动</div>
         </div>
-      </div>
+      </section>
 
-    </div>
+    </main>
   </div>
 
-  <!-- Bottom Status Bar -->
-  <div class="h-7 bg-slate-50/90 dark:bg-[#131822]/90 border-t border-slate-200/80 dark:border-slate-800/80 px-4 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 select-none shrink-0">
-    <div class="flex items-center gap-3">
-      <span class="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 font-medium">
-        <span class="w-2 h-2 rounded-full bg-emerald-500 ping-indicator"></span>
-        运行中 (Ready)
-      </span>
-      <span>|</span>
-      <span>受控 RDP (3389): <strong id="bottom-rdp-status" class="text-emerald-600 dark:text-emerald-400 font-medium">正常监听</strong></span>
-      <span>|</span>
-      <span id="bottom-cfg-path" class="font-mono text-slate-400 hidden sm:inline">~/.rdpulse/agent.yaml</span>
+  <!-- Status bar -->
+  <footer class="h-7 bg-white/80 dark:bg-[#111722]/90 border-t border-slate-200 dark:border-slate-800 px-4 flex items-center justify-between text-[12px] text-slate-500 dark:text-slate-400 shrink-0 gap-4">
+    <div class="flex items-center gap-2 min-w-0">
+      <span id="bottom-rdp-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"></span>
+      <span class="shrink-0">远程桌面 3389</span>
+      <span id="bottom-rdp-status" class="text-emerald-600 dark:text-emerald-400 font-medium shrink-0">正常监听</span>
     </div>
-    <div class="flex items-center gap-3 font-mono text-[10px]">
-      <span class="text-blue-600 dark:text-blue-400">Microsoft WebView2 Embedded</span>
-      <span>|</span>
-      <span>Win64</span>
-    </div>
+    <span id="bottom-cfg-path" class="mono text-slate-400 dark:text-slate-500 truncate">~/.rdpulse/agent.yaml</span>
+  </footer>
+
+  <!-- Toast -->
+  <div id="toast"
+       class="fixed bottom-11 left-1/2 -translate-x-1/2 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-[13px] px-4 py-2 rounded-lg shadow-lg opacity-0 pointer-events-none translate-y-2 transition-all duration-200 z-50 max-w-[560px]">
+    <span id="toast-msg" class="font-medium"></span>
   </div>
 
-  <!-- Toast Notification -->
-  <div id="toast" class="absolute bottom-10 right-6 bg-slate-900/95 dark:bg-slate-100 text-white dark:text-slate-900 text-xs px-4 py-2 rounded-xl shadow-2xl border border-slate-700 dark:border-slate-300 transition-all opacity-0 pointer-events-none transform translate-y-3 flex items-center gap-2 z-50">
-    <span id="toast-icon">ℹ️</span>
-    <span id="toast-msg" class="font-medium">提示</span>
-  </div>
-
-  <!-- JavaScript Bridge & UI Controller -->
   <script>
     let currentConfig = null;
     let pendingEarlyLogs = [];
-    window.onGoLog = function(msg) {
+
+    window.onGoLog = function (msg) {
       if (typeof appendLogLine === 'function') {
         appendLogLine(msg);
         if (typeof lastLogCount === 'number') lastLogCount++;
@@ -484,45 +536,74 @@
       }
     };
 
-    // Tab switching
-    function switchTab(tabId) {
-      document.querySelectorAll('.nav-item').forEach(btn => {
-        btn.classList.remove('text-blue-600', 'dark:text-blue-400', 'bg-blue-50', 'dark:bg-blue-500/10', 'border-blue-500/20', 'shadow-xs');
-        btn.classList.add('text-slate-600', 'dark:text-slate-400', 'border-transparent');
-      });
-      document.querySelectorAll('.tab-pane').forEach(pane => pane.classList.add('hidden'));
-
-      const activeBtn = document.getElementById('tab-btn-' + tabId);
-      const activePane = document.getElementById('tab-pane-' + tabId);
-
-      if (activeBtn && activePane) {
-        activeBtn.classList.remove('text-slate-600', 'dark:text-slate-400', 'border-transparent');
-        activeBtn.classList.add('text-blue-600', 'dark:text-blue-400', 'bg-blue-50', 'dark:bg-blue-500/10', 'border-blue-500/20', 'shadow-xs');
-        activePane.classList.remove('hidden');
-        if (tabId === 'logs') {
-          refreshLogs();
-        }
-      }
+    /* ---------- storage (WebView2 SetHtml runs on an opaque origin, so
+       localStorage can throw; every access degrades to in-memory) ---------- */
+    let memoryStore = {};
+    function storeGet(key) {
+      try { const v = localStorage.getItem(key); if (v !== null) return v; } catch (e) {}
+      return memoryStore[key] !== undefined ? memoryStore[key] : null;
+    }
+    function storeSet(key, value) {
+      memoryStore[key] = value;
+      try { localStorage.setItem(key, value); } catch (e) {}
     }
 
-    // Load initial config from Go
+    /* ---------- tabs ---------- */
+    function switchTab(tabId) {
+      document.querySelectorAll('.nav-item').forEach(btn => btn.setAttribute('aria-selected', 'false'));
+      document.querySelectorAll('.tab-pane').forEach(pane => pane.classList.add('hidden'));
+
+      const btn = document.getElementById('tab-btn-' + tabId);
+      const pane = document.getElementById('tab-pane-' + tabId);
+      if (!btn || !pane) return;
+      btn.setAttribute('aria-selected', 'true');
+      pane.classList.remove('hidden');
+      if (tabId === 'logs') refreshLogs();
+    }
+
+    /* ---------- recent targets ---------- */
+    function getRecentTargets() {
+      try { return JSON.parse(storeGet('rdpulse.recent') || '[]'); } catch (e) { return []; }
+    }
+    function rememberTarget(id) {
+      if (!id) return;
+      const list = getRecentTargets().filter(x => x !== id);
+      list.unshift(id);
+      storeSet('rdpulse.recent', JSON.stringify(list.slice(0, 5)));
+      renderRecentTargets();
+    }
+    function renderRecentTargets() {
+      const row = document.getElementById('recent-row');
+      const list = document.getElementById('recent-list');
+      const items = getRecentTargets();
+      list.innerHTML = '';
+      if (!items.length) { row.classList.add('hidden'); return; }
+      row.classList.remove('hidden');
+      items.forEach(id => {
+        const b = document.createElement('button');
+        b.className = 'mono px-2 py-0.5 rounded border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-700/50 hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 text-[12px] text-slate-600 dark:text-slate-300';
+        b.textContent = id;
+        b.onclick = () => fillTarget(id);
+        list.appendChild(b);
+      });
+    }
+
+    /* ---------- config ---------- */
     async function loadConfigToUI() {
       if (!window.goGetConfig) return;
       try {
-        const res = await window.goGetConfig();
-        const data = JSON.parse(res);
+        const data = JSON.parse(await window.goGetConfig());
         currentConfig = data.cfg;
 
-        // Path
-        document.getElementById('cfg-path-display').textContent = data.configPath || '~/.rdpulse/agent.yaml';
-        document.getElementById('bottom-cfg-path').textContent = data.configPath || '~/.rdpulse/agent.yaml';
+        const cfgPath = data.configPath || '~/.rdpulse/agent.yaml';
+        document.getElementById('cfg-path-display').textContent = cfgPath;
+        document.getElementById('bottom-cfg-path').textContent = cfgPath;
 
         const server = currentConfig.server || currentConfig.Server || {};
         const device = currentConfig.device || currentConfig.Device || {};
         const rdp = currentConfig.rdp || currentConfig.RDP || {};
         const gui = currentConfig.gui || currentConfig.GUI || {};
 
-        // Settings tab inputs
         document.getElementById('cfg-server-addr').value = server.address || server.Address || '';
         document.getElementById('cfg-rdzv-addr').value = server.rendezvousAddress || server.RendezvousAddress || '';
         document.getElementById('cfg-device-id').value = device.id || device.ID || '';
@@ -530,33 +611,31 @@
         document.getElementById('cfg-enrollment-token').value = device.enrollmentToken || device.EnrollmentToken || '';
         document.getElementById('cfg-rdp-addr').value = rdp.address || rdp.Address || '127.0.0.1:3389';
 
-        // Target tab
         document.getElementById('target-id-display').textContent = device.id || device.ID || '未配置';
         document.getElementById('target-rdp-addr-display').textContent = rdp.address || rdp.Address || '127.0.0.1:3389';
 
-        // Autostart checkboxes
         document.getElementById('chk-autostart').checked = !!data.isAutostart;
-        document.getElementById('side-autostart-status').textContent = data.isAutostart ? '已激活' : '未开启';
+        document.getElementById('side-autostart-status').textContent = data.isAutostart ? '已开启' : '未开启';
+        document.getElementById('side-autostart-status').className =
+          'text-[12px] font-medium ' + (data.isAutostart ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400');
+
         const autoListen = gui.autoStartTarget !== undefined ? gui.autoStartTarget : gui.AutoStartTarget;
         document.getElementById('chk-auto-listen').checked = !!autoListen;
         const minTray = gui.minimizeToTray !== undefined ? gui.minimizeToTray : gui.MinimizeToTray;
         document.getElementById('chk-min-tray').checked = minTray !== false;
 
-        // Synchronize Target listening & Controller state
-        if (data.targetRunning !== undefined) {
-          updateTargetUIState(!!data.targetRunning);
-        }
-        if (data.controllerRunning) {
-          updateControllerUIConnected();
+        const theme = gui.theme || gui.Theme || '';
+        if (theme === 'light' || theme === 'dark') {
+          applyTheme(theme === 'dark', false);
         }
 
-        showToast('已加载配置文件');
+        if (data.targetRunning !== undefined) updateTargetUIState(!!data.targetRunning);
+        if (data.controllerRunning) updateControllerUIConnected();
       } catch (err) {
         console.error('loadConfig error', err);
       }
     }
 
-    // Save config back to Go
     async function doSaveConfig() {
       if (!window.goSaveConfig) return;
       try {
@@ -567,81 +646,52 @@
         const enrollmentToken = document.getElementById('cfg-enrollment-token').value.trim();
         const rdpAddr = document.getElementById('cfg-rdp-addr').value.trim();
 
-        if (!serverAddr) {
-          showToast('保存失败: 中继服务器地址不能为空');
-          return;
-        }
-        if (!deviceId) {
-          showToast('保存失败: 设备 Device ID 不能为空');
-          return;
-        }
-        if (!secret || secret.length < 32) {
-          showToast('保存失败: 设备 Secret 密钥长度至少需 32 字节');
-          return;
-        }
-        if (enrollmentToken && enrollmentToken.length < 32) {
-          showToast('保存失败: 入网邀请码长度至少需 32 字节 (留空则不使用)');
-          return;
-        }
+        if (!serverAddr) return showToast('中继地址不能为空');
+        if (!deviceId) return showToast('设备 ID 不能为空');
+        if (!secret || secret.length < 32) return showToast('设备密钥至少需要 32 字节');
+        if (enrollmentToken && enrollmentToken.length < 32) return showToast('邀请码至少需要 32 字节，不用就留空');
 
         const updated = {
-          server: {
-            address: serverAddr,
-            rendezvousAddress: rdzvAddr
-          },
-          device: {
-            id: deviceId,
-            secret: secret,
-            enrollmentToken: enrollmentToken
-          },
-          rdp: {
-            address: rdpAddr || '127.0.0.1:3389'
-          },
+          server: { address: serverAddr, rendezvousAddress: rdzvAddr },
+          device: { id: deviceId, secret: secret, enrollmentToken: enrollmentToken },
+          rdp: { address: rdpAddr || '127.0.0.1:3389' },
           gui: {
             autoStartTarget: document.getElementById('chk-auto-listen').checked,
-            minimizeToTray: document.getElementById('chk-min-tray').checked
+            minimizeToTray: document.getElementById('chk-min-tray').checked,
+            theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light'
           }
         };
 
         const res = await window.goSaveConfig(JSON.stringify(updated));
         if (res && res !== 'ok') {
-          showToast('保存失败: ' + res);
+          showToast('保存失败：' + res);
         } else {
-          showToast('配置已成功持久化至文件');
+          showToast('配置已保存');
           loadConfigToUI();
         }
       } catch (err) {
-        showToast('保存失败: ' + err);
+        showToast('保存失败：' + err);
       }
     }
 
-    // Autostart toggle
     async function onToggleAutostart(el) {
       if (!window.goSetAutostart) return;
       try {
-        const ok = await window.goSetAutostart(el.checked);
-        document.getElementById('side-autostart-status').textContent = el.checked ? '已激活' : '未开启';
-        showToast(el.checked ? '已开启随电脑登录自启' : '已关闭开机自启');
+        await window.goSetAutostart(el.checked);
+        const s = document.getElementById('side-autostart-status');
+        s.textContent = el.checked ? '已开启' : '未开启';
+        s.className = 'text-[12px] font-medium ' + (el.checked ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400');
+        showToast(el.checked ? '已开启开机自启' : '已关闭开机自启');
       } catch (err) {
-        showToast('设置开机自启失败: ' + err);
+        showToast('设置开机自启失败：' + err);
         el.checked = !el.checked;
       }
     }
 
-    function onToggleAutoListen(el) {
-      if (currentConfig) {
-        doSaveConfig();
-      }
-    }
+    function onToggleAutoListen() { if (currentConfig) doSaveConfig(); }
+    function onToggleMinTray() { if (currentConfig) doSaveConfig(); }
 
-    function onToggleMinTray(el) {
-      if (currentConfig) {
-        doSaveConfig();
-      }
-    }
-
-    // Connect & Disconnect Controller
-    let isConnecting = false;
+    /* ---------- controller ---------- */
     async function doConnect() {
       const targetID = document.getElementById('ctrl-target-id').value.trim();
       const proxyAddr = document.getElementById('ctrl-proxy-port').value.trim();
@@ -649,28 +699,29 @@
       const disableP2P = document.getElementById('ctrl-force-relay').checked;
 
       if (!targetID) {
-        showToast('请先输入远程受控端 Device ID');
+        showToast('请先填写目标设备 ID');
+        document.getElementById('ctrl-target-id').focus();
         return;
       }
 
       const btn = document.getElementById('ctrl-connect-btn');
-      const disconnectBtn = document.getElementById('ctrl-disconnect-btn');
-      btn.innerHTML = '<span>⏳</span> 正在竞速穿透握手...';
       btn.disabled = true;
+      btn.innerHTML = '<span id="ctrl-connect-text">连接中…</span>';
 
       try {
         if (window.goConnect) {
           const err = await window.goConnect(targetID, proxyAddr, autoMstsc, disableP2P);
           if (err && err !== 'ok') {
-            showToast('连接失败: ' + err);
+            showToast('连接失败：' + err);
             resetConnectBtn();
             return;
           }
         }
+        rememberTarget(targetID);
         updateControllerUIConnected();
-        showToast('远程会话已建立成功');
+        showToast('已连接到 ' + targetID);
       } catch (e) {
-        showToast('连接异常: ' + e);
+        showToast('连接异常：' + e);
         resetConnectBtn();
       }
     }
@@ -678,55 +729,88 @@
     function updateControllerUIConnected() {
       const btn = document.getElementById('ctrl-connect-btn');
       const disconnectBtn = document.getElementById('ctrl-disconnect-btn');
-      btn.innerHTML = '<span>✓</span> 远程会话已建立 (mstsc 已拉起)';
-      btn.className = 'flex-1 py-3 px-5 rounded-xl bg-emerald-600 text-white font-bold text-xs shadow-md flex items-center justify-center gap-2';
+      btn.className = 'btn-live h-[42px] px-5 rounded-md font-semibold text-[13px] flex items-center justify-center gap-2 whitespace-nowrap';
+      btn.innerHTML = '<svg class="icon-sm" viewBox="0 0 24 24"><use href="#i-check"/></svg><span id="ctrl-connect-text">已连接</span>';
       btn.disabled = true;
       disconnectBtn.disabled = false;
       disconnectBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-      document.getElementById('ctrl-session-badge').textContent = '已连接';
-      document.getElementById('ctrl-session-badge').className = 'px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300';
+
+      const badge = document.getElementById('ctrl-session-badge');
+      badge.textContent = '已连接';
+      badge.className = 'px-2 py-0.5 rounded text-[12px] font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400';
     }
 
     async function doDisconnect() {
-      if (window.goDisconnect) {
-        await window.goDisconnect();
-      }
+      if (window.goDisconnect) await window.goDisconnect();
       resetConnectBtn();
-      showToast('远程会话已断开');
+      showToast('已断开连接');
     }
 
     function resetConnectBtn() {
       const btn = document.getElementById('ctrl-connect-btn');
       const disconnectBtn = document.getElementById('ctrl-disconnect-btn');
-      btn.innerHTML = '<span>⚡</span> <span>一键连接远程桌面 (P2P 竞速穿透)</span>';
-      btn.className = 'flex-1 py-3 px-5 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-600 hover:from-blue-700 hover:to-indigo-700 active:scale-[0.99] text-white font-bold text-xs shadow-md shadow-blue-500/25 flex items-center justify-center gap-2 transition-all';
+      btn.className = 'btn-primary h-[42px] px-5 rounded-md font-semibold text-[13px] flex items-center justify-center gap-2 whitespace-nowrap';
+      btn.innerHTML = '<svg class="icon-sm" viewBox="0 0 24 24"><use href="#i-bolt"/></svg><span id="ctrl-connect-text">连接</span>';
       btn.disabled = false;
       disconnectBtn.disabled = true;
       disconnectBtn.classList.add('opacity-50', 'cursor-not-allowed');
-      document.getElementById('ctrl-session-badge').textContent = '未连接 (就绪)';
-      document.getElementById('ctrl-session-badge').className = 'px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400';
-      document.getElementById('ctrl-tcp-path').textContent = '-';
-      document.getElementById('ctrl-udp-path').textContent = '-';
+
+      const badge = document.getElementById('ctrl-session-badge');
+      badge.textContent = '未连接';
+      badge.className = 'px-2 py-0.5 rounded text-[12px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400';
+      setPathDisplay('tcp', '');
+      setPathDisplay('udp', '');
     }
 
-    // Target Start/Stop
+    /* Colour the link state by how the traffic actually flows: direct is the
+       fast path, relay still works but goes through the server. */
+    function setPathDisplay(kind, raw) {
+      const label = document.getElementById('ctrl-' + kind + '-path');
+      const rawEl = document.getElementById('ctrl-' + kind + '-raw');
+      if (!label || !rawEl) return;
+
+      let text = '未连接';
+      let tone = 'text-slate-400 dark:text-slate-500';
+
+      if (raw && raw !== 'Unknown') {
+        if (raw === 'Disabled') {
+          text = '已关闭';
+          tone = 'text-amber-600 dark:text-amber-400';
+        } else if (raw.indexOf('Relay') >= 0) {
+          text = '中继转发';
+          tone = 'text-blue-600 dark:text-blue-400';
+        } else if (raw.indexOf('LAN') >= 0) {
+          text = '局域网直连';
+          tone = 'text-emerald-600 dark:text-emerald-400';
+        } else {
+          text = 'P2P 直连';
+          tone = 'text-emerald-600 dark:text-emerald-400';
+        }
+      }
+
+      label.textContent = text;
+      label.className = 'text-[14px] font-semibold mt-1 ' + tone;
+      rawEl.innerHTML = raw && raw !== 'Unknown' ? raw : '&nbsp;';
+    }
+
+    /* ---------- target ---------- */
     async function doStartTarget() {
       const startBtn = document.getElementById('target-start-btn');
       startBtn.disabled = true;
-      startBtn.innerHTML = '<span>⏳</span> 正在启动监听...';
+      startBtn.innerHTML = '<span>启动中…</span>';
       try {
         if (window.goStartTarget) {
           const err = await window.goStartTarget();
           if (err && err !== 'ok') {
-            showToast('启动被控失败: ' + err);
+            showToast('启动失败：' + err);
             updateTargetUIState(false);
             return;
           }
         }
         updateTargetUIState(true);
-        showToast('前台被控监听已开启');
+        showToast('本机被控已启动');
       } catch (e) {
-        showToast('启动监听异常: ' + e);
+        showToast('启动异常：' + e);
         updateTargetUIState(false);
       }
     }
@@ -734,15 +818,12 @@
     async function doStopTarget() {
       const stopBtn = document.getElementById('target-stop-btn');
       stopBtn.disabled = true;
-      stopBtn.innerHTML = '<span>⏳</span> 正在停止...';
       try {
-        if (window.goStopTarget) {
-          await window.goStopTarget();
-        }
+        if (window.goStopTarget) await window.goStopTarget();
         updateTargetUIState(false);
-        showToast('前台被控监听已停止');
+        showToast('本机被控已停止');
       } catch (e) {
-        showToast('停止监听异常: ' + e);
+        showToast('停止异常：' + e);
         updateTargetUIState(false);
       }
     }
@@ -751,192 +832,160 @@
       const badge = document.getElementById('target-state-badge');
       const startBtn = document.getElementById('target-start-btn');
       const stopBtn = document.getElementById('target-stop-btn');
+
+      startBtn.innerHTML = '<svg class="icon-sm" viewBox="0 0 24 24"><use href="#i-play"/></svg><span id="target-start-text">启动被控</span>';
+      stopBtn.innerHTML = '<svg class="icon-sm" viewBox="0 0 24 24"><use href="#i-stop"/></svg><span>停止</span>';
+
       if (running) {
-        badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> 监听运行中';
-        badge.className = 'px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-400/20 text-emerald-200 border border-emerald-400/30 flex items-center gap-1.5';
+        badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 live-dot"></span>运行中';
+        badge.className = 'px-2.5 py-1 rounded text-[12px] font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400 flex items-center gap-1.5 shrink-0';
         startBtn.disabled = true;
-        startBtn.innerHTML = '<span>▶️</span> 启动前台被控监听';
-        startBtn.classList.add('opacity-60');
         stopBtn.disabled = false;
-        stopBtn.innerHTML = '<span>⏹️</span> 停止监听';
         stopBtn.classList.remove('opacity-50', 'cursor-not-allowed');
       } else {
-        badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span> 未启动';
-        badge.className = 'px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-500/20 text-slate-300 border border-slate-400/30 flex items-center gap-1.5';
+        badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>未启动';
+        badge.className = 'px-2.5 py-1 rounded text-[12px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 flex items-center gap-1.5 shrink-0';
         startBtn.disabled = false;
-        startBtn.innerHTML = '<span>▶️</span> 启动前台被控监听';
-        startBtn.classList.remove('opacity-60');
         stopBtn.disabled = true;
-        stopBtn.innerHTML = '<span>⏹️</span> 停止监听';
         stopBtn.classList.add('opacity-50', 'cursor-not-allowed');
       }
     }
 
-    // Check 3389 port status
+    /* ---------- health ---------- */
     async function check3389Health() {
       if (!window.goCheck3389) return;
       try {
-        const isListening = await window.goCheck3389();
-        const sideEl = document.getElementById('side-rdp-status');
-        const bottomEl = document.getElementById('bottom-rdp-status');
-        if (isListening) {
-          sideEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-500 ping-indicator"></span> 正常监听';
-          sideEl.className = 'flex items-center gap-1.5 font-medium text-emerald-600 dark:text-emerald-400';
-          bottomEl.textContent = '正常监听';
-          bottomEl.className = 'text-emerald-600 dark:text-emerald-400 font-medium';
+        const listening = await window.goCheck3389();
+        const side = document.getElementById('side-rdp-status');
+        const bottom = document.getElementById('bottom-rdp-status');
+        const dot = document.getElementById('bottom-rdp-dot');
+        if (listening) {
+          side.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 live-dot"></span>正常';
+          side.className = 'flex items-center gap-1.5 text-[12px] font-medium text-emerald-600 dark:text-emerald-400';
+          bottom.textContent = '正常监听';
+          bottom.className = 'text-emerald-600 dark:text-emerald-400 font-medium shrink-0';
+          dot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0';
         } else {
-          sideEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-500"></span> 未检测到监听';
-          sideEl.className = 'flex items-center gap-1.5 font-medium text-amber-500';
-          bottomEl.textContent = '未开启';
-          bottomEl.className = 'text-amber-500 font-medium';
+          side.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>未开启';
+          side.className = 'flex items-center gap-1.5 text-[12px] font-medium text-amber-600 dark:text-amber-400';
+          bottom.textContent = '未开启';
+          bottom.className = 'text-amber-600 dark:text-amber-400 font-medium shrink-0';
+          dot.className = 'w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0';
         }
       } catch (err) {}
     }
 
-    // Quick target fill
+    /* ---------- misc actions ---------- */
     function fillTarget(id) {
       document.getElementById('ctrl-target-id').value = id;
-      showToast('已填入目标: ' + id);
     }
 
     function copyTargetID() {
       const id = document.getElementById('target-id-display').textContent;
-      if (window.goCopyClipboard) {
-        window.goCopyClipboard(id);
-      } else {
-        navigator.clipboard.writeText(id);
-      }
-      showToast('已复制设备 ID: ' + id);
+      if (window.goCopyClipboard) window.goCopyClipboard(id);
+      else navigator.clipboard.writeText(id);
+      showToast('已复制：' + id);
     }
 
-    // Random Secret generator
     function generateRandomSecret() {
-      const chars = '0123456789abcdef';
-      let secret = '';
-      for (let i = 0; i < 48; i++) {
-        secret += chars[Math.floor(Math.random() * chars.length)];
-      }
+      const bytes = new Uint8Array(24);
+      (window.crypto || window.msCrypto).getRandomValues(bytes);
+      const secret = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
       document.getElementById('cfg-secret').value = secret;
-      showToast('已生成新的 48 字节高强度通信密钥');
+      document.getElementById('cfg-secret').type = 'text';
+      document.getElementById('secret-visibility-text').textContent = '隐藏';
+      showToast('已生成新密钥，记得保存');
     }
 
-    function toggleSecretVisibility() {
-      const input = document.getElementById('cfg-secret');
-      const text = document.getElementById('secret-visibility-text');
-      if (input.type === 'password') {
-        input.type = 'text';
-        text.textContent = '隐藏';
-      } else {
-        input.type = 'password';
-        text.textContent = '显示';
-      }
+    function toggleFieldVisibility(inputId, labelId) {
+      const input = document.getElementById(inputId);
+      const label = document.getElementById(labelId);
+      const hidden = input.type === 'password';
+      input.type = hidden ? 'text' : 'password';
+      label.textContent = hidden ? '隐藏' : '显示';
     }
-
-    function toggleTokenVisibility() {
-      const input = document.getElementById('cfg-enrollment-token');
-      const text = document.getElementById('token-visibility-text');
-      if (input.type === 'password') {
-        input.type = 'text';
-        text.textContent = '隐藏';
-      } else {
-        input.type = 'password';
-        text.textContent = '显示';
-      }
-    }
+    function toggleSecretVisibility() { toggleFieldVisibility('cfg-secret', 'secret-visibility-text'); }
+    function toggleTokenVisibility() { toggleFieldVisibility('cfg-enrollment-token', 'token-visibility-text'); }
 
     function toggleServiceAccordion() {
       const panel = document.getElementById('svc-panel');
       const arrow = document.getElementById('svc-arrow');
-      if (panel.classList.contains('hidden')) {
-        panel.classList.remove('hidden');
-        arrow.textContent = '▲';
-      } else {
-        panel.classList.add('hidden');
-        arrow.textContent = '▼';
-      }
+      const open = panel.classList.toggle('hidden') === false;
+      arrow.style.transform = open ? 'rotate(180deg)' : '';
     }
 
     async function doServiceAction(act) {
       if (!window.goServiceAction) return;
       try {
-        const res = await window.goServiceAction(act);
-        showToast(res || '操作已执行');
+        showToast(await window.goServiceAction(act) || '操作已执行');
       } catch (e) {
-        showToast('服务操作失败: ' + e);
+        showToast('服务操作失败：' + e);
       }
     }
 
-    // Real-time Logs formatting and rendering
+    /* ---------- logs ---------- */
+    function logTone(line) {
+      if (/error|failed|失败|rejected|invalid|fatal/i.test(line)) return 'text-rose-400';
+      if (/warn|警告|timeout/i.test(line)) return 'text-amber-300';
+      if (line.indexOf('[Controller]') >= 0) return 'text-sky-400';
+      if (line.indexOf('[Target]') >= 0) return 'text-emerald-400';
+      if (line.indexOf('[Agent]') >= 0) return 'text-indigo-300';
+      return 'text-slate-300';
+    }
+
     function appendLogLine(msg) {
       const line = (msg || '').trim();
       if (!line) return;
-      const consoleEl = document.getElementById('log-console');
-      if (!consoleEl) return;
+      const el = document.getElementById('log-console');
+      if (!el) return;
 
-      while (consoleEl.children.length > 800) {
-        consoleEl.removeChild(consoleEl.firstChild);
-      }
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+      while (el.children.length > 800) el.removeChild(el.firstChild);
 
       const div = document.createElement('div');
-      div.className = 'font-mono text-[11px] leading-relaxed break-all';
-
-      if (/error|failed|失败|rejected|invalid|fatal/i.test(line)) {
-        div.className += ' text-rose-400';
-      } else if (/warn|警告|timeout/i.test(line)) {
-        div.className += ' text-amber-300';
-      } else if (line.includes('[Controller]')) {
-        div.className += ' text-blue-400';
-      } else if (line.includes('[Target]')) {
-        div.className += ' text-emerald-400';
-      } else if (line.includes('[Agent]')) {
-        div.className += ' text-indigo-300';
-      } else {
-        div.className += ' text-slate-300';
-      }
-
+      div.className = 'break-all ' + logTone(line);
       div.textContent = line;
-      consoleEl.appendChild(div);
-      consoleEl.scrollTop = consoleEl.scrollHeight;
+      el.appendChild(div);
+
+      // Only auto-scroll when the user is already at the tail, so scrolling
+      // back to read an error is not yanked away by the next line.
+      if (atBottom) el.scrollTop = el.scrollHeight;
     }
 
     let lastLogCount = 0;
     async function refreshLogs() {
       if (!window.goGetLogs) return;
       try {
-        let res = await window.goGetLogs();
+        const res = await window.goGetLogs();
         let logs = [];
         if (typeof res === 'string') {
-          try {
-            logs = JSON.parse(res);
-          } catch (e) {
-            logs = [res];
-          }
+          try { logs = JSON.parse(res); } catch (e) { logs = [res]; }
         } else if (Array.isArray(res)) {
           logs = res;
         }
-        if (Array.isArray(logs)) {
-          const consoleEl = document.getElementById('log-console');
-          if (!consoleEl) return;
-          if (logs.length !== lastLogCount || consoleEl.children.length <= 1) {
-            consoleEl.innerHTML = '';
-            logs.forEach(appendLogLine);
-            lastLogCount = logs.length;
-          }
+        if (!Array.isArray(logs)) return;
+
+        const el = document.getElementById('log-console');
+        if (!el) return;
+        if (logs.length !== lastLogCount || el.children.length <= 1) {
+          el.innerHTML = '';
+          logs.forEach(appendLogLine);
+          lastLogCount = logs.length;
+          el.scrollTop = el.scrollHeight;
         }
       } catch (err) {
         console.error('refreshLogs error:', err);
       }
     }
 
-    // Real-time Logs Callback from Go
-    window.onGoLog = function(msg) {
+    window.onGoLog = function (msg) {
       appendLogLine(msg);
       lastLogCount++;
     };
 
-    window.onGoStatus = function(data) {
-      if (data.tcpPath) document.getElementById('ctrl-tcp-path').textContent = data.tcpPath;
-      if (data.udpPath) document.getElementById('ctrl-udp-path').textContent = data.udpPath;
+    window.onGoStatus = function (data) {
+      if (data.tcpPath !== undefined) setPathDisplay('tcp', data.tcpPath);
+      if (data.udpPath !== undefined) setPathDisplay('udp', data.udpPath);
       if (data.targetRunning !== undefined) updateTargetUIState(data.targetRunning);
       if (data.controllerRunning !== undefined) {
         const badge = document.getElementById('ctrl-session-badge');
@@ -951,60 +1000,63 @@
 
     function copyAllLogs() {
       const text = document.getElementById('log-console').innerText;
-      if (window.goCopyClipboard) {
-        window.goCopyClipboard(text);
-      } else {
-        navigator.clipboard.writeText(text);
-      }
-      showToast('全部日志已复制到剪贴板');
+      if (window.goCopyClipboard) window.goCopyClipboard(text);
+      else navigator.clipboard.writeText(text);
+      showToast('日志已复制');
     }
 
     async function clearLogs() {
-      if (window.goClearLogs) {
-        await window.goClearLogs();
-      }
+      if (window.goClearLogs) await window.goClearLogs();
       lastLogCount = 0;
-      document.getElementById('log-console').innerHTML = '<div class="text-slate-500 font-mono">[System] Logs cleared</div>';
+      document.getElementById('log-console').innerHTML = '<div class="text-slate-500">[System] 日志已清空</div>';
       showToast('日志已清空');
     }
 
-    // Toast Notification helper
+    /* ---------- toast ---------- */
     let toastTimer = null;
     function showToast(msg) {
       const toast = document.getElementById('toast');
       document.getElementById('toast-msg').textContent = msg;
-      toast.classList.remove('opacity-0', 'translate-y-3');
+      toast.classList.remove('opacity-0', 'translate-y-2');
       toast.classList.add('opacity-100', 'translate-y-0');
       clearTimeout(toastTimer);
       toastTimer = setTimeout(() => {
         toast.classList.remove('opacity-100', 'translate-y-0');
-        toast.classList.add('opacity-0', 'translate-y-3');
-      }, 2500);
+        toast.classList.add('opacity-0', 'translate-y-2');
+      }, 2600);
     }
 
-    // Theme Toggle
-    function toggleTheme() {
-      const html = document.documentElement;
-      const icon = document.getElementById('theme-btn-icon');
-      if (html.classList.contains('dark')) {
-        html.classList.remove('dark');
-        icon.textContent = '☀️';
-      } else {
-        html.classList.add('dark');
-        icon.textContent = '🌙';
+    /* ---------- theme ---------- */
+    function applyTheme(dark, persist) {
+      document.documentElement.classList.toggle('dark', dark);
+      document.getElementById('theme-btn-icon').textContent = dark ? '☾' : '☀';
+      document.getElementById('theme-btn-label').textContent = dark ? '深色' : '浅色';
+      if (persist && window.goSetTheme) {
+        window.goSetTheme(dark ? 'dark' : 'light');
       }
+    }
+    function toggleTheme() {
+      applyTheme(!document.documentElement.classList.contains('dark'), true);
     }
     window.goToggleTheme = toggleTheme;
 
-    // Initialize on page load
+    /* ---------- boot ---------- */
     window.addEventListener('DOMContentLoaded', () => {
+      applyTheme(document.documentElement.classList.contains('dark'), false);
+      renderRecentTargets();
       loadConfigToUI();
       check3389Health();
       refreshLogs();
-      if (pendingEarlyLogs.length > 0) {
+
+      if (pendingEarlyLogs.length) {
         pendingEarlyLogs.forEach(appendLogLine);
         pendingEarlyLogs = [];
       }
+
+      document.getElementById('ctrl-target-id').addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !document.getElementById('ctrl-connect-btn').disabled) doConnect();
+      });
+
       setInterval(check3389Health, 3000);
       setInterval(refreshLogs, 1500);
     });
