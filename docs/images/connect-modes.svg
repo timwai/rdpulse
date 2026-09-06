@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="360" viewBox="0 0 920 360" role="img" aria-label="two connect modes">
+  <rect width="920" height="360" fill="#f8fafc"/>
+  <text x="460" y="36" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="18" font-weight="600" fill="#0f172a">两种用法，按场景选</text>
+  <rect x="36" y="64" width="416" height="260" rx="16" fill="#ffffff" stroke="#67e8f9"/>
+  <rect x="36" y="64" width="8" height="260" rx="4" fill="#06b6d4"/>
+  <text x="64" y="96" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="16" font-weight="600" fill="#0e7490">推荐 · 增强模式</text>
+  <text x="64" y="124" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#475569">控制端也装 Agent。先打洞，再自动打开 mstsc。</text>
+  <text x="64" y="164" font-family="ui-monospace, Consolas, monospace" font-size="13" fill="#0f172a">mstsc → 127.0.0.1:13389</text>
+  <text x="64" y="192" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#334155">• 局域网或公网 NAT 打洞成功：直连</text>
+  <text x="64" y="216" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#334155">• 打洞来不及或失败：立刻走 Relay</text>
+  <text x="64" y="240" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#334155">• 保留 RDP 的 TCP + UDP 双通道</text>
+  <text x="64" y="280" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="12" fill="#64748b">适合：自己的电脑连自己的电脑，要低延迟。</text>
+  <rect x="468" y="64" width="416" height="260" rx="16" fill="#ffffff" stroke="#c7d2fe"/>
+  <rect x="468" y="64" width="8" height="260" rx="4" fill="#4f46e5"/>
+  <text x="496" y="96" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="16" font-weight="600" fill="#3730a3">兼容模式</text>
+  <text x="496" y="124" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#475569">控制端不装任何软件，直接打开系统远程桌面。</text>
+  <text x="496" y="164" font-family="ui-monospace, Consolas, monospace" font-size="13" fill="#0f172a">mstsc → rdp.example.com:20001</text>
+  <text x="496" y="192" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#334155">• 每台被控端占用一个稳定公网端口</text>
+  <text x="496" y="216" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#334155">• 流量全部经 Relay 转发</text>
+  <text x="496" y="240" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#334155">• 可按 IP 白名单限制谁能连</text>
+  <text x="496" y="280" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="12" fill="#64748b">适合：临时从别人电脑连，或不便安装客户端。</text>
+</svg>

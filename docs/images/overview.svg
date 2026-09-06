@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="420" viewBox="0 0 920 420" role="img" aria-label="RDPulse three roles">
+  <rect width="920" height="420" fill="#f8fafc"/>
+  <text x="460" y="36" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="18" font-weight="600" fill="#0f172a">一次远程桌面，三台角色各司其职</text>
+  <text x="460" y="58" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="12" fill="#64748b">控制端发起连接 · Relay 负责信令与兜底中继 · 被控端挂着本机 3389</text>
+  <rect x="40" y="96" width="240" height="250" rx="16" fill="#ffffff" stroke="#cbd5e1"/>
+  <rect x="40" y="96" width="240" height="44" rx="16" fill="#0f172a"/>
+  <rect x="40" y="124" width="240" height="16" fill="#0f172a"/>
+  <text x="160" y="124" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="14" font-weight="600" fill="#e2e8f0">控制端 · 家里 / 出差电脑</text>
+  <text x="64" y="168" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#334155">1. 打开 RDPulse Agent</text>
+  <text x="64" y="194" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#334155">2. 输入目标设备 ID</text>
+  <text x="64" y="220" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#334155">3. 自动唤起 Windows 远程桌面</text>
+  <rect x="64" y="246" width="192" height="64" rx="10" fill="#ecfeff" stroke="#67e8f9"/>
+  <text x="160" y="272" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="12" fill="#0e7490">本地代理</text>
+  <text x="160" y="294" text-anchor="middle" font-family="ui-monospace, Consolas, monospace" font-size="13" fill="#155e75">127.0.0.1:13389</text>
+  <rect x="340" y="96" width="240" height="250" rx="16" fill="#ffffff" stroke="#c7d2fe"/>
+  <rect x="340" y="96" width="240" height="44" rx="16" fill="#4f46e5"/>
+  <rect x="340" y="124" width="240" height="16" fill="#4f46e5"/>
+  <text x="460" y="124" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="14" font-weight="600" fill="#eef2ff">公网 Relay</text>
+  <text x="364" y="168" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#334155">登记设备、发放邀请</text>
+  <text x="364" y="194" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#334155">交换双方公网地址</text>
+  <text x="364" y="220" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#334155">打洞失败时转发画面</text>
+  <rect x="364" y="246" width="192" height="64" rx="10" fill="#eef2ff" stroke="#a5b4fc"/>
+  <text x="460" y="272" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="12" fill="#3730a3">Web 控制台默认本机</text>
+  <text x="460" y="294" text-anchor="middle" font-family="ui-monospace, Consolas, monospace" font-size="13" fill="#312e81">127.0.0.1:8080</text>
+  <rect x="640" y="96" width="240" height="250" rx="16" fill="#ffffff" stroke="#cbd5e1"/>
+  <rect x="640" y="96" width="240" height="44" rx="16" fill="#0f172a"/>
+  <rect x="640" y="124" width="240" height="16" fill="#0f172a"/>
+  <text x="760" y="124" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="14" font-weight="600" fill="#e2e8f0">被控端 · 办公室电脑</text>
+  <text x="664" y="168" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#334155">安装 Agent 并开机自启</text>
+  <text x="664" y="194" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#334155">用邀请码完成首次注册</text>
+  <text x="664" y="220" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#334155">把流量接到本机 RDP</text>
+  <rect x="664" y="246" width="192" height="64" rx="10" fill="#ecfdf5" stroke="#6ee7b7"/>
+  <text x="760" y="272" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="12" fill="#047857">Windows 远程桌面</text>
+  <text x="760" y="294" text-anchor="middle" font-family="ui-monospace, Consolas, monospace" font-size="13" fill="#065f46">127.0.0.1:3389</text>
+  <path d="M280 220 H332" stroke="#94a3b8" stroke-width="2"/>
+  <path d="M580 220 H632" stroke="#94a3b8" stroke-width="2"/>
+  <text x="460" y="382" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="12" fill="#64748b">能直连就直连，不能直连就由 Relay 转发。对 mstsc 来说始终是连本机或一个普通公网端口。</text>
+</svg>

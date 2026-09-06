@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="340" viewBox="0 0 920 340" role="img" aria-label="path selection">
+  <rect width="920" height="340" fill="#f8fafc"/>
+  <text x="460" y="36" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="18" font-weight="600" fill="#0f172a">连上之后，系统自己选最快的路</text>
+  <text x="460" y="58" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="12" fill="#64748b">TCP 和 UDP 分开选路。你不用改 mstsc 设置。</text>
+  <text x="80" y="104" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" font-weight="600" fill="#0f172a">RDP TCP（键鼠、窗口、剪贴板）</text>
+  <rect x="80" y="120" width="200" height="48" rx="10" fill="#ecfeff" stroke="#22d3ee"/>
+  <text x="180" y="149" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#0e7490">P2P TCP 直连</text>
+  <text x="300" y="149" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="18" fill="#94a3b8">→</text>
+  <rect x="330" y="120" width="220" height="48" rx="10" fill="#eef2ff" stroke="#818cf8"/>
+  <text x="440" y="149" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#3730a3">QUIC 中继</text>
+  <text x="570" y="149" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="18" fill="#94a3b8">→</text>
+  <rect x="600" y="120" width="240" height="48" rx="10" fill="#f1f5f9" stroke="#94a3b8"/>
+  <text x="720" y="149" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#334155">TLS/TCP 回退</text>
+  <text x="80" y="214" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" font-weight="600" fill="#0f172a">RDP UDP（画面、音频，可丢不可卡）</text>
+  <rect x="80" y="230" width="200" height="48" rx="10" fill="#ecfeff" stroke="#22d3ee"/>
+  <text x="180" y="259" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#0e7490">P2P UDP 直连</text>
+  <text x="300" y="259" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="18" fill="#94a3b8">→</text>
+  <rect x="330" y="230" width="220" height="48" rx="10" fill="#eef2ff" stroke="#818cf8"/>
+  <text x="440" y="259" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#3730a3">QUIC 数据报中继</text>
+  <text x="570" y="259" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="18" fill="#94a3b8">→</text>
+  <rect x="600" y="230" width="240" height="48" rx="10" fill="#fff7ed" stroke="#fdba74"/>
+  <text x="720" y="259" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#9a3412">TLS 回退时关闭 UDP</text>
+  <text x="460" y="318" text-anchor="middle" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="12" fill="#64748b">会话一开始就预热 Relay。直连大约 300 毫秒内没就绪，先走中继，打通后再切过去。</text>
+</svg>

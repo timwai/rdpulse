@@ -1,369 +1,473 @@
-# RDPulse: 高性能 RDP 穿透与中继系统 (V2.0)
+# RDPulse
 
-基于 **QUIC (TLS 1.3) + TLS/TCP fallback + UDP/TCP P2P** 构建，专门针对 Microsoft Remote Desktop Protocol (RDP) 传输特征（TCP + UDP 独立双通道）优化的高性能远程桌面连接系统。
+自己搭一台中继，用 Windows 自带的远程桌面连回家或办公室。能打洞就直连，打不穿就走中继。对 `mstsc` 来说，连的始终是本机或一个普通公网端口。
 
-系统参考了 RustDesk 的分布式组网与打洞架构思想，结合 Hysteria2 的零重传 UDP 传输设计，实现 **“P2P 直连优先、QUIC 中继兜底、QUIC 被封锁时退回 TLS/TCP”** 的双通道传输。
+适合：不想把 3389 裸暴露在公网、又希望画面尽量接近局域网的个人或小团队。
 
-> 当前实现边界：UDP P2P 支持同一受控端多会话；TCP 直连支持 LAN/可路由 Candidate，并为每条 RDP TCP 连接独立鉴权建链；QUIC Stream/Datagram Relay、独立 TLS/TCP fallback 和公网端口兼容模式均已闭环。TLS/TCP fallback 按设计禁用 RDP UDP，避免 UDP-over-TCP 队头阻塞。
-
----
-
-## 🌟 核心特性 (V2.0)
-
-### 1. 最终连接与选路策略
-- **TCP 与 UDP 独立双通道选路**：
-  - **TCP 路径**：`P2P TCP` → `QUIC Stream Relay` → `TLS/TCP Relay`
-  - **UDP 路径**：`P2P UDP` → `QUIC Datagram Relay`；TLS/TCP fallback 下禁用
-- **Happy-Eyeballs 并发竞速**：
-  - 会话建立时，并发向局域网（LAN）与公网反射（Reflexive）候选地址发起 40 字节紧凑 UDP 打洞探测。
-  - 若 300ms 内 P2P 未能就绪，无缝激活预热的 QUIC Relay 通路，实现会话建立零卡顿。
-  - P2P 打洞成功后自动热升级路径，降低公网中继服务器带宽与时延开销。
-
-### 2. 双使用模式支持
-- **Enhanced Mode (推荐模式)**：
-  - 控制端运行 `rdp-agent connect <target_id>`，本地监听 `127.0.0.1:13389` (TCP+UDP)。
-  - 自动完成 Rendezvous 探测、Candidate 交换与 P2P 打洞，并自动唤起 Windows 原生 `mstsc.exe /v:127.0.0.1:13389`。
-  - 对用户和 Windows 原生 RDP 体验完全透明，尽享 P2P 低至局域网级的极速响应。
-- **Compatibility Mode (经典兼容模式)**：
-  - 控制端无需安装 Agent，直接在 `mstsc` 中输入 Relay 分配的公网端口（例如 `relay-ip:20001`），完全兼容原 V1.0 QUIC 中继。
-
-### 3. 高性能传输引擎
-- **无重传分片与重组**：UDP 流量默认分片（1150 字节）。超时缺失直接丢弃整个 UDP 帧（Drop instead of retransmit），杜绝传统 TCP 代理带来的队头阻塞与延迟累积。
-- **Rendezvous & NAT 探测服务**：服务端集成 UDP 21116 端口，提供高效 NAT 映射探测（Reflexive Candidate 反射）。
-- **P2P 数据面认证**：打洞报文和后续 UDP 数据均绑定 SessionID，并使用 HMAC-SHA256 防伪；接收端同时校验对端地址和 PacketID 防重放窗口。
-- **默认拒绝的设备安全策略**：未知设备必须持有按 DeviceID 绑定、带有效期且只能原子消费一次的 invitation；禁用设备不可重新注册；Controller 只能访问显式授权的 Target。
-- **连接级抗滥用**：Relay 鉴权、Enrollment、TLS 握手、公网 TCP 和会话创建均配置并发/速率上限。
-- **持久化防漂移**：Relay 采用 SQLite WAL 存储设备与端口映射，断网重启端口保持不变。
-- **Windows Service 原生支持**：内嵌服务管理器，支持一键注册、启动和自启。
+<p align="center">
+  <img src="docs/images/overview.svg" alt="控制端、Relay、被控端三端关系" width="920">
+</p>
 
 ---
 
-## 📂 项目结构
+## 目录
+
+- [它解决什么问题](#它解决什么问题)
+- [你会用到的三个角色](#你会用到的三个角色)
+- [两种连接方式](#两种连接方式)
+- [连上之后走哪条路](#连上之后走哪条路)
+- [第一次用：四步走通](#第一次用四步走通)
+- [日常操作](#日常操作)
+- [安全约定](#安全约定)
+- [配置说明](#配置说明)
+- [自行编译](#自行编译)
+- [开发者备注](#开发者备注)
+
+---
+
+## 它解决什么问题
+
+Windows 远程桌面本身很好用：键鼠走 TCP，画面和声音可以走 UDP。麻烦的是公网。
+
+| 常见做法 | 你会碰到什么 |
+| --- | --- |
+| 路由器直接映射 3389 | 扫描、爆破、端口一变全家断连 |
+| frp / nps 一类 TCP 隧道 | 能通，但 RDP 的 UDP 通道经常废掉，拖动窗口发黏 |
+| 商业远控 | 账号在别人服务器上，按席位收费 |
+
+RDPulse 把这三件事放在一起：
+
+1. **被控端不用改路由器。** Agent 主动连上你的 Relay，在家宽带或公司 NAT 后面也能被找到。
+2. **优先直连。** 同一局域网或 NAT 允许打洞时，画面不绕你的云主机。
+3. **直连失败立刻中继。** 会话开始就预热 Relay，不必等打洞超时再重连。
+
+你仍然用系统自带的「远程桌面连接」，不用换一套远控界面。
+
+---
+
+## 你会用到的三个角色
+
+| 角色 | 跑在哪 | 你要做的事 |
+| --- | --- | --- |
+| **Relay** | 一台有公网 IP 的 Linux / Windows 机器 | 部署服务、配证书、在 Web 控制台发邀请和授权 |
+| **被控端** | 要被远程的那台 Windows | 安装 Agent，填设备 ID、密钥、邀请码，建议装成服务 |
+| **控制端** | 你手头这台 Windows | 增强模式装同一个 Agent 再点连接；兼容模式直接开 mstsc |
+
+同一份 Agent 程序两种用法：在被控端是「挂着等别人连」；在控制端是「帮你打洞并拉起 mstsc」。
+
+Web 控制台默认只监听本机 `127.0.0.1:8080`。在服务器上用 SSH 隧道打开，不要一上来把管理口暴露到公网。
+
+---
+
+## 两种连接方式
+
+<p align="center">
+  <img src="docs/images/connect-modes.svg" alt="增强模式与兼容模式对比" width="920">
+</p>
+
+**增强模式（推荐）**：控制端也运行 Agent。它在本机监听 `127.0.0.1:13389`（TCP + UDP），然后自动执行：
 
 ```text
-RDPulse/
-├── cmd/
-│   ├── relay/              # Relay & Rendezvous 服务端入口
-│   │   └── main.go
-│   └── agent/              # Agent 客户端入口 (Controller / Controlled)
-│       └── main.go
-├── internal/
-│   ├── protocol/           # 核心协议（Control, TCP Header, UDP Header, Punch 报文）
-│   ├── nat/                # NAT 网卡扫描与公网 Candidate 探测
-│   ├── rendezvous/         # Rendezvous UDP 21116 反射服务
-│   ├── signaling/          # P2P 会话协调器与信令交换
-│   ├── punch/              # UDP / TCP P2P 并发打洞引擎与 Keepalive
-│   ├── path/               # 路径管理器 (Happy-Eyeballs 并发竞速与动态切换)
-│   ├── controller/         # 控制端本地 127.0.0.1:13389 代理与 mstsc 桥接
-│   ├── transport/          # 传输抽象接口与 quic-go 实现
-│   ├── relay/              # Relay 核心服务（AgentManager, PortManager, TCP/UDP 监听）
-│   ├── agent/              # Agent 核心逻辑（Client, Controller, 重连, 健康检测）
-│   ├── tcp/                # TCP 流代理转发引擎
-│   ├── udp/                # UDP 会话管理、分片拆包与超时重组
-│   ├── acl/                # IP CIDR 白名单访问控制
-│   ├── service/            # Windows Service 服务封装
-│   ├── storage/            # SQLite WAL 数据持久化
-│   └── config/             # YAML 配置解析
-├── configs/
-│   ├── relay.yaml          # Relay 配置文件
-│   └── agent.yaml          # Agent 配置文件
-├── bin/                    # 预编译二进制文件
-└── test/
-    ├── e2e_test.go         # V1 中继端到端测试
-    └── p2p_e2e_test.go     # V2 P2P + Relay 混合选路端到端测试
+mstsc.exe /v:127.0.0.1:13389
+```
+
+你登录的还是 Windows 远程桌面，只是计算机名变成了本机。后面的打洞、中继、切路都发生在 Agent 里。
+
+**兼容模式**：控制端不装软件。Relay 给每台在线被控端分配一个**稳定**公网端口（重启后也不变）。在 mstsc 里填：
+
+```text
+rdp.example.com:20001
+```
+
+流量全部经 Relay。适合临时从别人电脑连，或策略不允许安装客户端。谁能连这个公网端口，由 Relay 的 IP 白名单决定。
+
+---
+
+## 连上之后走哪条路
+
+<p align="center">
+  <img src="docs/images/path-select.svg" alt="TCP 与 UDP 独立选路" width="920">
+</p>
+
+RDP 本来就是两条腿走路，RDPulse 也按两条腿选路，互不等待。
+
+- **TCP**：直连 → QUIC 中继 → 网络封锁 UDP 时再退到 TLS/TCP。
+- **UDP**：直连 → QUIC 数据报中继。走到 TLS/TCP 回退时会关掉 UDP，避免「UDP 再包一层 TCP」把卡顿叠起来。
+
+直连报文带会话密钥的完整性校验；中继走 TLS 1.3（QUIC 或 TCP）。你在 mstsc 里不需要勾选特殊选项，系统会按 Windows 自己的策略使用 UDP。
+
+```mermaid
+sequenceDiagram
+    participant You as 控制端 mstsc
+    participant Agent as 控制端 Agent
+    participant Relay as 公网 Relay
+    participant Target as 被控端 Agent
+    participant RDP as 本机 3389
+
+    You->>Agent: 连接 127.0.0.1:13389
+    Agent->>Relay: 要连 office-pc
+    Relay->>Target: 通知对端地址
+    par 同时尝试
+        Agent->>Target: UDP / TCP 打洞
+        Agent->>Relay: 预热中继
+    end
+    alt 约 300ms 内直连成功
+        Agent->>Target: 走 P2P
+    else 直连还没就绪
+        Agent->>Relay: 先走中继
+        Relay->>Target: 转发
+    end
+    Target->>RDP: 接到本机远程桌面
 ```
 
 ---
 
-## 🚀 快速开始
+## 第一次用：四步走通
 
-### 1. 预编译二进制文件与跨平台支持
+下面用一套示例身份，请换成你自己的随机值，不要用文档里的字符串当生产密钥。
 
-`bin/` 目录下已预先构建全平台原生可执行文件（静态编译，无外部 CGO 依赖）：
-- **Windows x64**：`rdp-relay.exe`、`rdp-agent.exe`
-- **Linux amd64**：`rdp-relay-linux-amd64`
-- **Linux arm64 (AArch64)**：`rdp-relay-linux-arm64`
-- **Linux armv7 (32位 ARM)**：`rdp-relay-linux-armv7`
-- **macOS Apple Silicon (M1/M2/M3/M4)**：`rdp-relay-darwin-arm64`
+| 用途 | 示例值 |
+| --- | --- |
+| Relay 域名 | `rdp.example.com` |
+| 被控端设备 ID | `office-pc` |
+| 控制端设备 ID | `home-laptop` |
+| 设备密钥 / 邀请码 | 各用至少 32 字节的随机串 |
 
-如需重新编译：
-```powershell
-# 编译 Windows 版本
-go build -ldflags="-s -w" -o bin/rdp-relay.exe ./cmd/relay
-go build -ldflags="-s -w" -o bin/rdp-agent.exe ./cmd/agent
+<p align="center">
+  <img src="docs/images/first-run.svg" alt="部署、邀请、上线、连接四步" width="920">
+</p>
 
-# 交叉编译 Linux 与 macOS M4 版本
-$env:CGO_ENABLED="0"
-$env:GOOS="linux";  $env:GOARCH="amd64"; go build -ldflags="-s -w" -o bin/rdp-relay-linux-amd64 ./cmd/relay
-$env:GOOS="linux";  $env:GOARCH="arm64"; go build -ldflags="-s -w" -o bin/rdp-relay-linux-arm64 ./cmd/relay
-$env:GOOS="linux";  $env:GOARCH="arm"; $env:GOARM="7"; go build -ldflags="-s -w" -o bin/rdp-relay-linux-armv7 ./cmd/relay
-$env:GOOS="darwin"; $env:GOARCH="arm64"; $env:GOARM=""; go build -ldflags="-s -w" -o bin/rdp-relay-darwin-arm64 ./cmd/relay
+### 1. 部署 Relay
+
+公网机器需要放行：
+
+| 端口 | 协议 | 用途 |
+| --- | --- | --- |
+| 443 | UDP | QUIC 控制面与中继 |
+| 443 | TCP | QUIC 被拦时的 TLS 回退 |
+| 21116 | UDP | NAT 反射 / 打洞辅助 |
+| 20000–39999（按你的配置） | TCP + UDP | 兼容模式的公网映射 |
+
+把 `configs/relay.yaml` 拷到服务器，至少改这几项：
+
+```yaml
+rdp:
+  publicHost: "rdp.example.com"
+  portRange:
+    start: 20000
+    end: 39999
+server:
+  quic:
+    listen: ":443"
+    certFile: "/etc/rdp-relay/tls/fullchain.pem"
+    keyFile: "/etc/rdp-relay/tls/privkey.pem"
+  tls:
+    listen: ":443"
+  rendezvous:
+    listen: ":21116"
+web:
+  listen: "127.0.0.1:8080"
+  token: ""          # 留空则启动时打印一串随机 Token
 ```
 
----
-
-### 2. 服务端部署 (Relay + Rendezvous)
-
-在公网服务器上运行（开放 UDP 21116 用于 Rendezvous，443/UDP 用于 QUIC，443/TCP 用于 TLS fallback，以及配置的被控端口范围如 20000-20100）：
+生产环境必须提供证书。没有证书时进程会拒绝启动；只有本机调试才把 `allowEphemeralCertificate` 设为 `true`。
 
 ```bash
-./bin/rdp-relay-linux-amd64 --config configs/relay.yaml
+./rdp-relay --config /etc/rdp-relay/config.yaml
 ```
 
-系统化守护进程部署可参考 `scripts/rdp-relay.service`。
+长期运行可用 `scripts/rdp-relay.service`。启动日志里会打印 Web Token，用 SSH 转到本机后再打开控制台：
 
----
+```bash
+ssh -L 8080:127.0.0.1:8080 user@rdp.example.com
+```
 
-### 3. 被控端部署 (Controlled PC)
+浏览器打开 `http://127.0.0.1:8080`，把 Token 贴进控制台。不要把 Token 写进网址。
 
-编辑 `configs/agent.yaml`：
+### 2. 在控制台邀请并授权
+
+打开「设备注册邀请」，新增一条：
+
+- 设备 ID：`office-pc`（以及你自己的 `home-laptop`）
+- Token：至少 32 字节随机数
+- 过期时间：按需要设，过期即作废
+
+邀请按设备绑定，**注册成功后作废**，不能拿同一条再注册第二台。需要重新开放时，换一条新 Token。
+
+再打开「访问授权矩阵」，允许控制端访问被控端，例如：
+
+```yaml
+controllerAccess:
+  office-pc: ["home-laptop"]
+```
+
+没有这条授权，控制端即使自己注册成功，也连不上目标。
+
+### 3. 被控端上线
+
+在办公室电脑编辑 `configs/agent.yaml`（或 GUI 里的「连接设置」）：
+
 ```yaml
 server:
-  address: "relay.example.com:443"
-  tlsAddress: "relay.example.com:443"
-  rendezvousAddress: "relay.example.com:21116"
-  caCert: "C:\\RDPulse\\relay-ca.pem"
-  insecureSkipVerify: false
+  address: "rdp.example.com:443"
+  tlsAddress: "rdp.example.com:443"
+  rendezvousAddress: "rdp.example.com:21116"
 
 device:
   id: "office-pc"
-  # 每台设备独立生成的至少 32 字节随机密钥
-  secret: ""
-  # 仅首次注册使用；必须对应 Relay 中同 DeviceID 的未过期 invitation
-  enrollmentToken: ""
+  secret: "请换成至少 32 字节的随机密钥"
+  enrollmentToken: "请换成控制台里那条邀请"
 
 rdp:
   address: "127.0.0.1:3389"
 ```
 
-#### 前台调试运行：
+被控端本机要开启远程桌面。然后：
+
 ```powershell
-./bin/rdp-agent.exe run --config configs/agent.yaml
+# 前台看日志
+.\rdp-agent.exe run --config C:\RDPulse\agent.yaml
+
+# 或双击 rdp-agent.exe / rdp-agent-gui.exe 打开图形界面
 ```
 
-#### 安装为 Windows 系统服务（开机自启）：
+日志出现注册成功后，**清空 `enrollmentToken` 并重启**，避免邀请码长期躺在配置文件里。
+
+开机自启（管理员 PowerShell）：
+
 ```powershell
-# 管理员权限运行
-./bin/rdp-agent.exe install --config C:\RDPulse\agent.yaml
-./bin/rdp-agent.exe start
-./bin/rdp-agent.exe status
+.\rdp-agent.exe install --config C:\RDPulse\agent.yaml
+.\rdp-agent.exe start
+.\rdp-agent.exe status
 ```
+
+Web 控制台的设备列表里，`office-pc` 应变为在线，并看到分配到的公网端口。
+
+### 4. 从控制端连过去
+
+控制端用另一台已注册设备（`home-laptop`），配置里指向同一台 Relay。图形界面填目标 ID `office-pc` 点连接；或命令行：
+
+```powershell
+.\rdp-agent.exe connect office-pc --config C:\RDPulse\agent.yaml
+```
+
+默认会拉起 `mstsc`。用户名密码仍是办公室那台 Windows 的账号，和直连局域网没有区别。
+
+不想装 Agent 时，看控制台里该设备的公网端口，在任意一台电脑的 mstsc 填 `rdp.example.com:端口`。这就是兼容模式。
 
 ---
 
-### 4. 控制端连接 (Controller PC)
+## 日常操作
 
-#### 方式 A：Enhanced 极速模式（自动 P2P 打洞）
-在控制端 Windows 电脑上：
-```powershell
-./bin/rdp-agent.exe connect office-pc --config configs/agent.yaml
-```
-- 控制端 Agent 会在本地监听 `127.0.0.1:13389`；
-- 与目标设备进行 UDP 打洞并按连接尝试 TCP 直连，同时保持 Relay 可立即使用；
-- 自动启动 `mstsc.exe /v:127.0.0.1:13389` 进入远程桌面；
-- 优先走 P2P 直连，打洞不通无感回退 Relay 中继。
+### Windows 图形界面
 
-#### 方式 B：Compatibility 兼容模式（免客户端）
-直接打开系统的 `mstsc.exe`，输入被控端在 Relay 上的公网映射地址：
+双击 `rdp-agent.exe`（无参数）或 `rdp-agent-gui.exe` 进入桌面程序。常见三块：
+
+- **远程连接**：填目标设备 ID，可选关闭 P2P、是否自动打开 mstsc。
+- **本机被控**：把这台电脑挂到 Relay 上，供别人连。
+- **连接设置**：Relay 地址、设备 ID、密钥、邀请码、本机 3389 地址。
+
+关窗口会进托盘，不会断开会话。需要彻底退出时从托盘菜单退出。
+
+命令行对照：
+
 ```text
-relay-ip:20001
+rdp-agent.exe                  打开图形界面
+rdp-agent.exe gui              同上
+rdp-agent.exe run              前台被控
+rdp-agent.exe connect <id>     控制端连接
+rdp-agent.exe install|start|stop|status|uninstall
 ```
+
+默认配置路径是 `%USERPROFILE%\.rdpulse\agent.yaml`，可用 `--config` 覆盖。本地代理默认 `127.0.0.1:13389`，可用 `--proxy` 改。
+
+### Web 控制台
+
+本机打开后可以看到：
+
+- **系统概览**：QUIC、Rendezvous、在线设备数
+- **设备管理**：启用 / 禁用、公网端口、上次在线
+- **设备注册邀请**：发码、作废，不必重启 Relay
+- **访问授权矩阵**：谁可以连谁
+- **服务端配置 / 实时日志**：改完会写回 `relay.yaml`
+
+禁用某台设备后，它不能再注册、也不能再被连。
+
+### 兼容模式谁能连进来
+
+`security.defaultPolicy` 默认是 `deny`，`allow` 为空时，公网映射端口不接受陌生人。把你家出口 IP 写成 CIDR 再放行，例如 `203.0.113.10/32`。增强模式不走这张表，只认「控制端已注册 + 授权矩阵」。
 
 ---
 
-## 📖 完整中文配置说明
+## 安全约定
 
-### 0. 通用约定
+- 每台设备自己的 `secret` 至少 32 字节，且只保存在该设备上。Relay 库里存的是哈希。
+- 邀请码按设备绑定、带过期时间、注册一次即废。
+- 控制端必须先作为设备注册，再被写进目标的授权列表。
+- Web Token 用请求头或 Cookie，不接受 `?token=`。
+- Web 与 Prometheus 默认绑本机。要改成 `0.0.0.0` 时，先配好 Token 和防火墙。
+- 打洞和 P2P 数据带会话级校验，防伪造和简单重放；中继通道走 TLS 1.3。
 
-- 配置采用 YAML；省略的字段使用程序内置默认值，未列出的未知字段会被忽略。
-- 所有时间字段使用 Go duration 文本：`10s`、`500ms`、`2m30s`、`1h`。
-- 布尔字段使用 YAML 的 `true` / `false`。
-- 时间点字段使用 RFC 3339，例如 `"2030-01-01T00:00:00Z"`，建议用引号包裹。
-- Relay 启动时执行严格校验：缺少必填项、证书配置不完整、邀请无效或过期都会直接启动失败并打印原因。
-- Agent 校验规则：`server.address`、`device.id` 必填；`device.secret` 至少 32 字节；配置了 `device.enrollmentToken` 时至少 32 字节。
-- RDP UDP 数据帧的分片重组上限由协议固定为 64 片，不受配置调大影响。
+丢失 `secret` 就当作这台设备被冒充：在控制台禁用设备，轮换密钥，重新发一条邀请。
 
-### 1. Relay 服务端配置（`configs/relay.yaml`）
+---
+
+## 配置说明
+
+YAML。没写的字段用内置默认值。时间用 Go 写法：`10s`、`500ms`、`2m`。时间点用 RFC 3339，建议加引号。
+
+### Relay（`configs/relay.yaml`）
 
 ```yaml
 server:
   quic:
-    listen: ":443"                 # QUIC UDP 监听地址（host:port），默认 ":443"
+    listen: ":443"
     certFile: "/etc/rdp-relay/tls/fullchain.pem"
     keyFile: "/etc/rdp-relay/tls/privkey.pem"
-    allowEphemeralCertificate: false
-    # 生产必须同时配置 certFile/keyFile。缺证书时 fail-closed 拒绝启动；
-    # 只有显式设置 allowEphemeralCertificate: true 才在开发环境临时生成自签证书。
+    allowEphemeralCertificate: false   # 生产必须为 false
   tls:
-    listen: ":443"                 # TLS/TCP fallback 监听地址，可与 QUIC 同端口
-    disabled: false                # true 表示关闭 TLS/TCP fallback
+    listen: ":443"
+    disabled: false
   rendezvous:
-    listen: ":21116"               # UDP Rendezvous/NAT 反射服务，默认 ":21116"
+    listen: ":21116"
 
 rdp:
-  publicHost: "rdp.example.com"    # 必填；分配给兼容模式的公网主机名/IP
-  portRange:
-    start: 20000                   # 每个被控端绑定公网端口的起始值
-    end: 39999                     # 结束值（含），重启后端口保持稳定
+  publicHost: "rdp.example.com"        # 兼容模式展示给用户的主机名
+  portRange: { start: 20000, end: 39999 }
 
 udp:
-  datagramPayload: 1150            # 单分片 RDP UDP 最大负载字节数
-  sessionIdleTimeout: 60s          # 空闲 UDP 会话超时
-  reassemblyTimeout: 100ms         # 分片重组等待时间，超时丢弃整帧
-  maxSessionsPerAgent: 256         # 单个被控端公网端口的 UDP 会话上限
-  maxSessionsPerIP: 32             # 同一客户端源 IP 的会话上限
-  maxSessionCreateRate: 50         # 每秒允许新建会话数
+  datagramPayload: 1150
+  sessionIdleTimeout: 60s
+  reassemblyTimeout: 100ms
+  maxSessionsPerAgent: 256
+  maxSessionsPerIP: 32
+  maxSessionCreateRate: 50
 
 security:
-  defaultPolicy: deny              # "deny" 或 "allow"；兼容模式访问控制默认策略
-  allow: []                        # 显式放行列表，支持 203.0.113.5/32、10.0.0.0/8 等 CIDR
-  enrollmentInvitations: []        # 按设备绑定的首次注册邀请
-  # - deviceID: "PC-TARGET-B"
-  #   token: "GENERATE_A_UNIQUE_RANDOM_VALUE_OF_AT_LEAST_32_BYTES"
-  #   expiresAt: "2030-01-01T00:00:00Z"
-  allowAllControllerTargets: false # true 后任何已认证 Controller 可访问任意 Target
-  controllerAccess: {}             # 键为 Target 设备 ID，值为允许访问的 Controller ID 列表
+  defaultPolicy: deny
+  allow: []                            # 兼容模式 IP 白名单
+  enrollmentInvitations: []
+  allowAllControllerTargets: false
+  controllerAccess:
+    office-pc: ["home-laptop"]
   limits:
-    maxConnectionsPerIP: 16        # 同一源 IP 到 Relay 控制通道的并发连接数
-    maxConnectionRatePerMinute: 60 # 同一源 IP 每分钟新建控制通道上限
-    maxEnrollmentRatePerMinute: 5  # 同一源 IP 每分钟邀请注册尝试上限
-    maxPublicTCPPerIP: 32          # 同一源 IP 并发公网 TCP 连接上限
-    maxPublicTCPRatePerSecond: 20  # 同一源 IP 每秒新建公网 TCP 连接上限
+    maxConnectionsPerIP: 16
+    maxConnectionRatePerMinute: 60
+    maxEnrollmentRatePerMinute: 5
+    maxPublicTCPPerIP: 32
+    maxPublicTCPRatePerSecond: 20
 
 storage:
-  type: sqlite                     # 目前仅支持 sqlite
+  type: sqlite
   path: "/var/lib/rdp-relay/relay.db"
 
 metrics:
-  listen: "127.0.0.1:9090"         # Prometheus /metrics 与 pprof 监听
+  listen: "127.0.0.1:9090"
+
+web:
+  listen: "127.0.0.1:8080"
+  disabled: false
+  token: ""
 
 log:
-  level: info                      # 已定义字段；当前版本日志框架尚未按此过滤
+  level: info
 ```
 
-补充说明：
+说明：
 
-- 旧版全局 `security.enrollmentToken` 已移除，配置后会在加载阶段直接报错；请改用 `security.enrollmentInvitations`。
-- 每台新设备只允许一条未过期、同 `deviceID` 的 invitation；token 至少 32 字节且应使用密码学随机数。
-- invitation 首次注册时被原子消费一次；同设备同 token 已消费后，即使重启 Relay 也不会复活。需要重新开放时，用新 token 轮换该设备记录。
-- `controllerAccess["目标ID"] = ["*"]` 表示任意 Controller 可访问该 Target；`controllerAccess["*"] = ["控制器ID"]` 表示该 Controller 可访问任意 Target。`allowAllControllerTargets: true` 等价于后者使用 `"*"`。两者都应只在明确需要时使用。
-- `defaultPolicy: deny` 配合 `allow: []` 时，未放行 IP 无法通过兼容模式公网端口访问；Enhanced 模式仍由 Controller 身份与 `controllerAccess` 控制。
+- 已不再支持全局 `security.enrollmentToken`，写了会启动失败。
+- `controllerAccess["office-pc"] = ["*"]` 表示任意已注册控制端都可连这台；`controllerAccess["*"]` 或 `allowAllControllerTargets: true` 表示某个 / 所有控制端可连任意目标。只在你明确要这么做时使用。
+- 端口范围含首尾。设备与端口的对应关系在 SQLite 里，Relay 重启后保持不变。
 
-### 2. Agent 配置（`configs/agent.yaml`）
+### Agent（`configs/agent.yaml`）
 
 ```yaml
 server:
-  address: "relay.example.com:443"     # 必填；QUIC 使用的 UDP 主机:端口
-  tlsAddress: "relay.example.com:443"  # TLS fallback 地址；省略时等于 address
-  rendezvousAddress: "relay.example.com:21116" # NAT 反射候选探测服务
-  caCert: "C:\\RDPulse\\relay-ca.pem"  # Relay 自签/私有 CA 证书 PEM；留空用系统信任库
-  insecureSkipVerify: false            # 仅开发/调试临时开启，生产必须为 false
-  disableQUIC: false                   # true 时跳过 QUIC，直接尝试 TLS/TCP fallback
-  disableTLSFallback: false            # true 时 QUIC 失败后不再尝试 TLS/TCP
-  quicDialTimeout: 4s                  # 单次 QUIC 拨号超时
+  address: "rdp.example.com:443"
+  tlsAddress: "rdp.example.com:443"
+  rendezvousAddress: "rdp.example.com:21116"
+  caCert: ""                           # 私有 CA 时填 PEM 路径
+  insecureSkipVerify: false            # 生产必须为 false
+  disableQUIC: false
+  disableTLSFallback: false
+  quicDialTimeout: 4s
 
 device:
-  id: "office-pc"                      # 必填；设备唯一 ID
-  secret: ""                           # 至少 32 字节随机密钥；已注册设备直接用于 AUTH
-  enrollmentToken: ""                  # 仅首次注册需要，与 Relay 中同 ID invitation 对应
+  id: "office-pc"
+  secret: ""
+  enrollmentToken: ""
 
 rdp:
-  address: "127.0.0.1:3389"            # 被控端本机 RDP 地址；Controller 连接时不影响转发
+  address: "127.0.0.1:3389"
 
 transport:
-  datagramPayload: 1150                # RDP UDP 单分片负载，应与 Relay 保持一致
-  disableP2P: false                    # true 时本端不发起/接受 UDP/TCP P2P，强制走 Relay
+  datagramPayload: 1150
+  disableP2P: false                    # true 则本端只走中继
 
 udp:
   sessionIdleTimeout: 60s
   reassemblyTimeout: 100ms
 
 heartbeat:
-  interval: 10s                        # Relay 保活心跳周期
+  interval: 10s
 
 reconnect:
-  maxInterval: 30s                     # 断线重连最大退避间隔（从 1s 起指数退避）
+  maxInterval: 30s
 
 log:
-  level: info                          # 已定义字段；当前版本日志框架尚未按此过滤
-  path: "agent.log"                    # 已定义字段；当前版本未启用文件输出
+  level: info
+  path: "agent.log"
 ```
 
-补充说明：
-
-- 同一份 Agent 配置既可用于被控端，也可用于控制端。被控端把 `rdp.address` 指向本机 RDP 服务；控制端执行 `connect <targetID>` 时该字段不参与转发。
-- Controller 连接前必须满足授权：控制端设备自身已注册，且目标设备在 Relay `controllerAccess` 中允许该 Controller。
-- `device.enrollmentToken` 只在普通鉴权收到 428 challenge（未知设备）后发送，不会在常规 AUTH 中泄漏。
-- 若 `server.disableQUIC` 与 `server.disableTLSFallback` 同时为 `true`，Agent 将没有任何 Relay 通道可建立连接，属于预期错误配置。
-- 双端 `transport.disableP2P`、`transport.datagramPayload` 建议保持一致；TLS/TCP fallback 按设计禁用 RDP UDP，只承载 TCP 流。
-
-### 3. 最小可用配置示例
-
-Relay 首次启用（证书由外部签发）：
-
-```yaml
-server:
-  quic:
-    listen: ":443"
-    certFile: "/etc/letsencrypt/live/rdp.example.com/fullchain.pem"
-    keyFile: "/etc/letsencrypt/live/rdp.example.com/privkey.pem"
-  tls:
-    listen: ":443"
-  rendezvous:
-    listen: ":21116"
-rdp:
-  publicHost: "rdp.example.com"
-  portRange: { start: 20000, end: 39999 }
-security:
-  defaultPolicy: deny
-  enrollmentInvitations:
-    - deviceID: "office-pc"
-      token: "REPLACE_WITH_32_PLUS_RANDOM_BYTES"
-      expiresAt: "2030-01-01T00:00:00Z"
-  controllerAccess:
-    office-pc: ["home-laptop"]
-storage:
-  type: sqlite
-  path: "/var/lib/rdp-relay/relay.db"
-```
-
-被控端首次注册后，应清空 `device.enrollmentToken` 并重启 Agent，避免后续配置被误用。
+`disableQUIC` 与 `disableTLSFallback` 不要同时为 `true`，否则没有任何中继通道。两端的 `datagramPayload`、`disableP2P` 建议保持一致。
 
 ---
 
-## 🧪 自动化测试验证
+## 自行编译
 
-全量自动化测试覆盖了单元协议、P2P 仿真打洞、NAT 反射探测以及真实端到端混合链路：
+仓库不附带预编译文件。本机有 Go 即可。
 
-```powershell
-go test -v ./...
-```
-包含：
-- `TestUDPPunchingSimulation`：双对等端 UDP 紧凑报文打洞与 Keepalive 校验
-- `TestTCPPunchingSimulation`：Controller/受控端双角色 TCP 鉴权握手
-- `TestUDPDispatcherRoutesConcurrentSessions`：共享 UDP socket 的 SessionID 并发分发
-- `TestTLSMuxStreamsBidirectional`：独立 TLS/TCP 多路复用传输
-- `TestRendezvousProbe`：UDP 21116 反射候选地址探测
-- `TestEndToEndRelay`：完整 QUIC Stream (TCP) 与 Datagram (UDP) 中继闭环
-- `TestP2PAndControllerEndToEnd`：Enhanced 模式 TCP/UDP P2P、多 Controller 并发会话验证
-- `TestForcedQUICRelayControllerEndToEnd`：关闭 P2P 后强制验证 QUIC Stream/Datagram Relay
-- `TestForcedTLSRelayControllerEndToEnd`：关闭 QUIC/P2P 后强制验证 TLS/TCP Relay 与 UDP 禁用
-- `TestExternalNATEndToEnd`：接入独立公网 Relay 与受控端，验证真实 NAT/CGNAT 下的选路和直连 TCP 鉴权（默认跳过）
-
-真实 NAT 测试需要在与受控端不同的网络运行，并由环境变量显式启用：
+Windows（Agent 图形界面 + Relay）：
 
 ```powershell
-$env:RDPULSE_EXTERNAL_RELAY_ADDR="relay.example.com:443"
-$env:RDPULSE_EXTERNAL_TLS_ADDR="relay.example.com:443"
-$env:RDPULSE_EXTERNAL_RENDEZVOUS_ADDR="relay.example.com:21116"
-$env:RDPULSE_EXTERNAL_CONTROLLER_ID="external-controller"
-$env:RDPULSE_EXTERNAL_CONTROLLER_SECRET="至少 32 字节的设备密钥"
-$env:RDPULSE_EXTERNAL_ENROLLMENT_TOKEN="首次注册时使用的 invitation，可留空"
-$env:RDPULSE_EXTERNAL_TARGET_ID="office-pc"
-$env:RDPULSE_EXTERNAL_CA_CERT="C:\\RDPulse\\relay-ca.pem"
-$env:RDPULSE_EXTERNAL_EXPECT_TCP="direct" # any/direct/relay
-$env:RDPULSE_EXTERNAL_EXPECT_UDP="direct" # any/direct/relay/disabled
-go test -v ./test -run TestExternalNATEndToEnd -count=1
+.\build.ps1
 ```
 
-若测试环境使用临时证书，可显式设置 `RDPULSE_EXTERNAL_INSECURE_SKIP_VERIFY=true`；还可用 `RDPULSE_EXTERNAL_DISABLE_P2P` 或 `RDPULSE_EXTERNAL_DISABLE_QUIC` 强制覆盖相应回退场景。
+产物在 `bin\`：`rdp-agent.exe`、`rdp-agent-gui.exe`、`rdp-relay.exe`，以及 Linux amd64 / arm64 的 Relay。
+
+只编某一端：
+
+```powershell
+go build -ldflags="-s -w" -o bin/rdp-relay.exe ./cmd/relay
+go build -o bin/rdp-agent.exe ./cmd/agent
+go build -ldflags="-H=windowsgui" -o bin/rdp-agent-gui.exe ./cmd/agent
+```
+
+交叉编译 Relay：
+
+```powershell
+$env:CGO_ENABLED = "0"
+$env:GOOS = "linux"; $env:GOARCH = "amd64"; go build -ldflags="-s -w" -o bin/rdp-relay-linux-amd64 ./cmd/relay
+$env:GOOS = "linux"; $env:GOARCH = "arm64"; go build -ldflags="-s -w" -o bin/rdp-relay-linux-arm64 ./cmd/relay
+```
+
+---
+
+## 开发者备注
+
+```text
+cmd/relay          服务端入口
+cmd/agent          客户端入口（GUI / 被控 / 控制 / Windows 服务）
+internal/path      双通道选路
+internal/punch     UDP / TCP 打洞
+internal/web       Relay 管理控制台
+internal/gui       Windows 桌面
+configs/           示例配置（均为占位符，不含真实密钥）
+docs/images/       README 示意图
+```
+
+```powershell
+go test ./...
+```
+
+真实公网 NAT 场景默认跳过，需要时自行设置 `RDPULSE_EXTERNAL_*` 环境变量后运行 `TestExternalNATEndToEnd`。更细的协议与选路说明见仓库里的设计文档。
