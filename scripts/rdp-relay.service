@@ -1,0 +1,21 @@
+[Unit]
+Description=RDPulse Relay Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/etc/rdp-relay
+ExecStart=/usr/local/bin/rdp-relay --config /etc/rdp-relay/config.yaml
+Restart=always
+RestartSec=3
+
+# Increase file descriptor limits for high connection scale
+LimitNOFILE=1048576
+
+# High performance UDP receive/send socket buffer capabilities
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

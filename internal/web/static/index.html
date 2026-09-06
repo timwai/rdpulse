@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RDPulse Relay - 服务端管理控制台</title>
+  <script src="tailwind.js"></script>
+  <style>
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.05); }
+    ::-webkit-scrollbar-thumb { background: rgba(150, 150, 150, 0.3); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(150, 150, 150, 0.5); }
+  </style>
+</head>
+<body class="bg-[#0f172a] text-[#e2e8f0] font-sans antialiased min-h-screen flex">
+
+  <!-- 左侧固定导航栏 -->
+  <aside class="w-64 bg-[#1e293b] border-r border-[#334155] flex flex-col justify-between flex-shrink-0">
+    <div>
+      <!-- 品牌标识 -->
+      <div class="h-16 flex items-center px-6 border-b border-[#334155] gap-3">
+        <div class="w-9 h-9 rounded-lg bg-gradient-to-tr from-indigo-500 to-cyan-400 flex items-center justify-center font-bold text-white shadow-lg shadow-indigo-500/30">
+          RD
+        </div>
+        <div>
+          <h1 class="font-bold text-base tracking-wide text-white">RDPulse Relay</h1>
+          <span class="text-xs text-indigo-400 font-mono">v2.0 • Web Console</span>
+        </div>
+      </div>
+
+      <!-- 核心状态指示 -->
+      <div class="p-4 mx-3 my-3 bg-[#0f172a]/60 rounded-xl border border-[#334155]/60 text-xs space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="text-slate-400">QUIC (UDP)</span>
+          <span id="side-quic-status" class="inline-flex items-center text-emerald-400 font-medium"><span class="w-2 h-2 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>运行中</span>
+        </div>
+        <div class="flex items-center justify-between">
+          <span class="text-slate-400">Rendezvous (UDP)</span>
+          <span id="side-rdzv-status" class="inline-flex items-center text-emerald-400 font-medium"><span class="w-2 h-2 rounded-full bg-emerald-500 mr-1.5"></span>活跃</span>
+        </div>
+        <div class="flex items-center justify-between">
+          <span class="text-slate-400">Web 控制台</span>
+          <span class="inline-flex items-center text-cyan-400 font-medium">就绪</span>
+        </div>
+      </div>
+
+      <!-- 菜单项 -->
+      <nav class="px-3 space-y-1 mt-2">
+        <button onclick="switchTab('tab-overview')" id="btn-tab-overview" class="tab-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition bg-indigo-600 text-white shadow-md shadow-indigo-600/30">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>
+          系统概览
+        </button>
+        <button onclick="switchTab('tab-devices')" id="btn-tab-devices" class="tab-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:bg-[#334155] hover:text-white transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+          设备管理
+          <span id="side-online-badge" class="ml-auto bg-emerald-500/20 text-emerald-400 py-0.5 px-2 rounded-full text-xs font-bold">0 在线</span>
+        </button>
+        <button onclick="switchTab('tab-invites')" id="btn-tab-invites" class="tab-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:bg-[#334155] hover:text-white transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
+          设备注册邀请
+          <span class="ml-auto bg-amber-500/20 text-amber-400 py-0.5 px-1.5 rounded-full text-xs font-bold">免重启</span>
+        </button>
+        <button onclick="switchTab('tab-access')" id="btn-tab-access" class="tab-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:bg-[#334155] hover:text-white transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+          访问授权矩阵
+        </button>
+        <button onclick="switchTab('tab-config')" id="btn-tab-config" class="tab-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:bg-[#334155] hover:text-white transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+          服务端配置
+        </button>
+        <button onclick="switchTab('tab-logs')" id="btn-tab-logs" class="tab-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:bg-[#334155] hover:text-white transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+          实时运行日志
+        </button>
+      </nav>
+    </div>
+
+    <!-- 底部状态 -->
+    <div class="p-4 border-t border-[#334155] text-xs text-slate-400">
+      <div class="flex items-center gap-2 mb-1">
+        <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+        <span id="side-host" class="text-slate-300 font-medium">Relay Active</span>
+      </div>
+      <div class="text-[11px] text-slate-500">SQLite WAL 持久化保护</div>
+    </div>
+  </aside>
+
+  <!-- 右侧主展示区 -->
+  <main class="flex-1 flex flex-col min-w-0 overflow-y-auto">
+    <!-- 顶部 Bar -->
+    <header class="h-16 bg-[#1e293b]/70 backdrop-blur border-b border-[#334155] flex items-center justify-between px-8 sticky top-0 z-10">
+      <div class="flex items-center gap-3">
+        <h2 id="page-title" class="text-lg font-semibold text-white">系统概览</h2>
+        <span class="text-xs bg-slate-800 text-slate-400 px-2.5 py-1 rounded-md border border-slate-700">实时数据流</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-1.5 bg-slate-800/80 px-2.5 py-1 rounded-lg border border-slate-700">
+          <span class="text-xs text-slate-400">Token:</span>
+          <input type="password" id="global-token-input" placeholder="留空或输入Token" class="bg-transparent text-xs text-white outline-none w-28 font-mono" onchange="saveToken(this.value)">
+        </div>
+        <button onclick="openModal()" class="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+          生成新设备邀请
+        </button>
+      </div>
+    </header>
+
+    <div class="p-8 max-w-7xl w-full mx-auto space-y-6">
+
+      <!-- ====================== TAB 1: 系统概览 ====================== -->
+      <section id="tab-overview" class="tab-content space-y-6">
+        <!-- 统计指标卡片 -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div class="bg-[#1e293b] p-5 rounded-xl border border-[#334155]">
+            <div class="text-xs text-slate-400 mb-1">在线受控端 (Target)</div>
+            <div id="stat-online" class="text-2xl font-bold text-white flex items-baseline gap-2">
+              0 <span id="stat-registered" class="text-xs font-normal text-slate-500">/ 0 已注册</span>
+            </div>
+            <div class="mt-3 text-[11px] text-emerald-400 flex items-center">
+              ● 心跳正常实时更新
+            </div>
+          </div>
+          <div class="bg-[#1e293b] p-5 rounded-xl border border-[#334155]">
+            <div class="text-xs text-slate-400 mb-1">活跃连接会话 (Sessions)</div>
+            <div id="stat-sessions" class="text-2xl font-bold text-white">0</div>
+            <div class="mt-3 text-[11px] text-indigo-400 flex items-center">
+              P2P 与 QUIC 中继会话池
+            </div>
+          </div>
+          <div class="bg-[#1e293b] p-5 rounded-xl border border-[#334155]">
+            <div class="text-xs text-slate-400 mb-1">运行持续时间 (Uptime)</div>
+            <div id="stat-uptime" class="text-2xl font-bold text-emerald-400">0s</div>
+            <div class="mt-3 text-[11px] text-slate-400">
+              服务运行平稳
+            </div>
+          </div>
+          <div class="bg-[#1e293b] p-5 rounded-xl border border-[#334155]">
+            <div class="text-xs text-slate-400 mb-1">兼容模式公网端口池</div>
+            <div id="stat-portrange" class="text-xl font-bold text-white font-mono">-</div>
+            <div class="mt-3 text-[11px] text-cyan-400">
+              持久化端口映射，防重启漂移
+            </div>
+          </div>
+        </div>
+
+        <!-- 实时拓扑状态 -->
+        <div class="bg-[#1e293b] rounded-xl border border-[#334155] p-6">
+          <h3 class="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-indigo-500"></span>
+            服务端核心监听状态
+          </h3>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="p-4 bg-[#0f172a] rounded-lg border border-[#334155]">
+              <div class="flex items-center justify-between text-xs mb-1">
+                <span class="font-bold text-slate-200">QUIC 传输服务</span>
+                <span class="px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-400">运行中</span>
+              </div>
+              <div id="topo-quic" class="text-xs font-mono text-slate-400 mt-2">UDP -</div>
+            </div>
+
+            <div class="p-4 bg-[#0f172a] rounded-lg border border-[#334155]">
+              <div class="flex items-center justify-between text-xs mb-1">
+                <span class="font-bold text-slate-200">Rendezvous NAT 反射服务</span>
+                <span class="px-2 py-0.5 rounded text-[10px] bg-indigo-500/20 text-indigo-400">P2P 关键</span>
+              </div>
+              <div id="topo-rdzv" class="text-xs font-mono text-slate-400 mt-2">UDP -</div>
+            </div>
+
+            <div class="p-4 bg-[#0f172a] rounded-lg border border-[#334155]">
+              <div class="flex items-center justify-between text-xs mb-1">
+                <span class="font-bold text-slate-200">公网 Host 映射</span>
+                <span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300">PublicHost</span>
+              </div>
+              <div id="topo-host" class="text-xs font-mono text-slate-400 mt-2">-</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================== TAB 2: 设备管理 ====================== -->
+      <section id="tab-devices" class="tab-content hidden space-y-6">
+        <div class="bg-[#1e293b] rounded-xl border border-[#334155] overflow-hidden">
+          <div class="p-5 border-b border-[#334155] flex items-center justify-between">
+            <div>
+              <h3 class="text-sm font-semibold text-white">受控设备列表</h3>
+              <p class="text-xs text-slate-400 mt-0.5">所有已注册入网的机器，具备持久化的固定端口与独立安全密钥</p>
+            </div>
+            <button onclick="loadDevices()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium border border-slate-700">
+              刷新列表
+            </button>
+          </div>
+
+          <table class="w-full text-left text-xs text-slate-300">
+            <thead class="bg-[#0f172a]/60 text-slate-400 font-semibold border-b border-[#334155]">
+              <tr>
+                <th class="p-4">设备 ID</th>
+                <th class="p-4">在线状态</th>
+                <th class="p-4">兼容公网端口</th>
+                <th class="p-4">来源 IP / 端口</th>
+                <th class="p-4">启用管理</th>
+                <th class="p-4">最后上线</th>
+                <th class="p-4 text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody id="devices-tbody" class="divide-y divide-[#334155]">
+              <tr>
+                <td colspan="7" class="p-8 text-center text-slate-500">正在载入设备数据...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ====================== TAB 3: 设备邀请管理 (免重启入网) ====================== -->
+      <section id="tab-invites" class="tab-content hidden space-y-6">
+        <div class="bg-indigo-950/40 border border-indigo-500/30 rounded-xl p-5 flex items-center justify-between">
+          <div class="space-y-1">
+            <h4 class="text-sm font-semibold text-indigo-200">⚡ 免重启入网：动态生成邀请 Token</h4>
+            <p class="text-xs text-indigo-300/80">点击下方按钮生成邀请，系统直接写入 SQLite 数据库，<strong>服务端无需任何重启即可生效！</strong></p>
+          </div>
+          <button onclick="openModal()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-md shadow-indigo-600/30">
+            + 立即生成新设备邀请
+          </button>
+        </div>
+
+        <div class="bg-[#1e293b] rounded-xl border border-[#334155] overflow-hidden">
+          <div class="p-5 border-b border-[#334155] flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-white">当前邀请凭证池</h3>
+            <button onclick="loadInvitations()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium border border-slate-700">
+              刷新邀请
+            </button>
+          </div>
+          <table class="w-full text-left text-xs text-slate-300">
+            <thead class="bg-[#0f172a]/60 text-slate-400 font-semibold border-b border-[#334155]">
+              <tr>
+                <th class="p-4">设备 ID</th>
+                <th class="p-4">邀请 Token 哈希</th>
+                <th class="p-4">到期时间</th>
+                <th class="p-4">状态</th>
+                <th class="p-4 text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody id="invitations-tbody" class="divide-y divide-[#334155]">
+              <tr>
+                <td colspan="5" class="p-8 text-center text-slate-500">正在载入邀请记录...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ====================== TAB 4: 访问授权矩阵 ====================== -->
+      <section id="tab-access" class="tab-content hidden space-y-6">
+        <div class="bg-[#1e293b] rounded-xl border border-[#334155] p-6 space-y-6">
+          <div class="flex items-center justify-between pb-4 border-b border-[#334155]">
+            <div>
+              <h3 class="text-sm font-semibold text-white">全局控制端访问授权策略</h3>
+              <p class="text-xs text-slate-400 mt-1">控制端 (Controller) 发起连接时，Relay 进行准入校验的规则</p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input id="access-allow-all" type="checkbox" class="sr-only peer">
+              <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+              <span class="ml-3 text-xs font-medium text-slate-300">允许所有合法 Controller 访问任意 Target (极简模式)</span>
+            </label>
+          </div>
+
+          <div class="space-y-3">
+            <h4 class="text-xs font-semibold text-slate-300 uppercase tracking-wider">细粒度 Controller 访问映射 (JSON)</h4>
+            <p class="text-[11px] text-slate-400">键为 Target 设备 ID，值为允许连接该 Target 的 Controller ID 数组：</p>
+            <textarea id="access-map-json" rows="6" class="w-full bg-[#0f172a] border border-[#334155] rounded-xl p-3 font-mono text-xs text-indigo-300 outline-none focus:border-indigo-500"></textarea>
+            <div class="flex justify-end">
+              <button onclick="saveAccessPolicy()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-md">
+                保存授权策略并同步到配置文件
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================== TAB 5: 服务端配置 ====================== -->
+      <section id="tab-config" class="tab-content hidden space-y-6">
+        <!-- 常用参数快速配置卡片 -->
+        <div class="bg-[#1e293b] rounded-xl border border-[#334155] p-6 space-y-5">
+          <div class="flex items-center justify-between pb-4 border-b border-[#334155]">
+            <div>
+              <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+                服务端运行核心参数
+              </h3>
+              <p class="text-xs text-slate-400 mt-1">修改以下设置并保存，系统将即刻更新内存并自动同步保存至 relay.yaml（保留原有注释）</p>
+            </div>
+            <button onclick="loadConfig()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium border border-slate-700">
+              重新加载
+            </button>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+            <div>
+              <label class="block text-slate-300 font-medium mb-1">公网主机名 / IP (publicHost)</label>
+              <input id="cfg-public-host" type="text" placeholder="例如: rdp.example.com 或 123.45.67.89" class="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 outline-none">
+              <span class="text-[11px] text-slate-500 mt-1 block">客户端连接中继和生成入网配置时所使用的公网地址</span>
+            </div>
+
+            <div>
+              <label class="block text-slate-300 font-medium mb-1">默认网络准入策略 (defaultPolicy)</label>
+              <select id="cfg-default-policy" class="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 outline-none">
+                <option value="deny">deny (默认严格拒绝未授权访问，生产推荐)</option>
+                <option value="allow">allow (默认放行，仅在受信任内网中使用)</option>
+              </select>
+              <span class="text-[11px] text-slate-500 mt-1 block">控制通道和兼容模式未显式匹配时的默认安全策略</span>
+            </div>
+
+            <div>
+              <label class="block text-slate-300 font-medium mb-1">兼容模式分配端口池范围 (portRange)</label>
+              <div class="flex items-center gap-2">
+                <input id="cfg-port-start" type="number" placeholder="起始端口 如 3389" class="w-1/2 bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 outline-none">
+                <span class="text-slate-400 font-bold">~</span>
+                <input id="cfg-port-end" type="number" placeholder="终止端口 如 3489" class="w-1/2 bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 outline-none">
+              </div>
+              <span class="text-[11px] text-slate-500 mt-1 block">为每个被控设备持久分配的固定公网端口范围</span>
+            </div>
+
+            <div>
+              <label class="block text-slate-300 font-medium mb-1">Web 控制台管理员 Token (web.token)</label>
+              <input id="cfg-web-token" type="password" placeholder="留空则启动时动态生成；输入新密码可固定" class="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 outline-none">
+              <span class="text-[11px] text-slate-500 mt-1 block">Web 控制台访问凭证，若修改保存请牢记新密钥</span>
+            </div>
+          </div>
+
+          <div class="flex justify-end pt-2">
+            <button onclick="saveConfigBasic()" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-md shadow-indigo-600/30">
+              保存核心参数并同步到配置文件
+            </button>
+          </div>
+        </div>
+
+        <!-- 完整 YAML 配置文件在线编辑器 -->
+        <div class="bg-[#1e293b] rounded-xl border border-[#334155] p-6 space-y-4">
+          <div class="flex items-center justify-between pb-3 border-b border-[#334155]">
+            <div>
+              <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                完整配置文件在线编辑 (relay.yaml)
+              </h3>
+              <p class="text-xs text-slate-400 mt-1">支持直接编辑全部服务参数与安全策略；保存前将进行 YAML 语法自动校验</p>
+            </div>
+            <span class="text-xs font-mono text-slate-500 bg-slate-800/80 px-2.5 py-1 rounded border border-slate-700">configs/relay.yaml</span>
+          </div>
+
+          <textarea id="cfg-raw-yaml" rows="16" spellcheck="false" class="w-full bg-[#0b0f19] border border-[#334155] rounded-xl p-4 font-mono text-xs text-indigo-300 outline-none focus:border-indigo-500 leading-relaxed"></textarea>
+
+          <div class="flex justify-between items-center pt-2">
+            <span class="text-[11px] text-slate-500">提示：修改底层监听网络参数需重启生效；访问授权矩阵、邀请与安全配置免重启即刻热生效。</span>
+            <button onclick="saveConfigYaml()" class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-md shadow-emerald-600/30">
+              语法校验并保存全量 YAML 配置
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================== TAB 6: 实时运行日志 ====================== -->
+      <section id="tab-logs" class="tab-content hidden space-y-4">
+        <div class="bg-[#1e293b] rounded-xl border border-[#334155] p-5 space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+              Relay 实时流式运行日志 (SSE)
+            </h3>
+            <button onclick="clearLogs()" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs border border-slate-700">
+              清空日志
+            </button>
+          </div>
+          <div id="relay-logs-box" class="bg-[#0b0f19] border border-[#1e293b] rounded-xl p-4 h-[500px] overflow-y-auto font-mono text-xs text-slate-300 space-y-1 shadow-inner">
+            <div class="text-slate-500">正在连接日志流...</div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- 生成新邀请 Modal 弹窗 -->
+  <div id="invite-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+    <div class="bg-[#1e293b] border border-[#334155] rounded-xl max-w-lg w-full p-6 shadow-2xl space-y-5">
+      <div class="flex items-center justify-between border-b border-[#334155] pb-3">
+        <h3 class="text-base font-bold text-white flex items-center gap-2">
+          <span class="text-indigo-400">🎟️</span> 一键生成新设备接入邀请
+        </h3>
+        <button onclick="closeModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
+      </div>
+
+      <div class="space-y-4 text-xs">
+        <div>
+          <label class="block text-slate-300 font-medium mb-1">目标设备 ID (Device ID)</label>
+          <input id="modal-device-id" type="text" placeholder="例如: office-pc" class="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 outline-none">
+        </div>
+
+        <div>
+          <label class="block text-slate-300 font-medium mb-1">邀请有效期 (天)</label>
+          <input id="modal-expires" type="number" value="30" class="w-full bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 outline-none">
+        </div>
+
+        <div id="modal-result" class="hidden space-y-3 pt-2">
+          <div>
+            <label class="block text-emerald-400 font-medium mb-1">生成成功的 32 字节 Token (仅显示一次)</label>
+            <input id="modal-token-val" type="text" readonly class="w-full bg-[#0f172a] border border-emerald-500/50 rounded-lg px-3 py-2 text-emerald-400 font-mono outline-none">
+          </div>
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">客户端配置片段 (可直接复制给 Agent)</label>
+            <textarea id="modal-yaml-val" rows="6" readonly class="w-full bg-[#0f172a] border border-[#334155] rounded-lg p-2 text-[11px] text-indigo-300 font-mono"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-2">
+        <button onclick="closeModal()" class="px-4 py-2 bg-slate-700 text-white rounded-lg text-xs font-semibold">关闭</button>
+        <button id="modal-submit-btn" onclick="submitCreateInvite()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-md">生成并生效</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.tab-btn').forEach(el => {
+        el.classList.remove('bg-indigo-600', 'text-white', 'shadow-md', 'shadow-indigo-600/30');
+        el.classList.add('text-slate-300');
+      });
+      document.getElementById(tabId).classList.remove('hidden');
+      const btn = document.getElementById('btn-' + tabId);
+      btn.classList.add('bg-indigo-600', 'text-white', 'shadow-md', 'shadow-indigo-600/30');
+      btn.classList.remove('text-slate-300');
+
+      const titles = {
+        'tab-overview': '系统概览',
+        'tab-devices': '设备管理',
+        'tab-invites': '设备注册邀请 (免重启入网)',
+        'tab-access': '访问授权矩阵',
+        'tab-config': '服务端配置 (relay.yaml 同步)',
+        'tab-logs': '实时运行日志'
+      };
+      document.getElementById('page-title').innerText = titles[tabId];
+
+      if (tabId === 'tab-overview') loadOverview();
+      if (tabId === 'tab-devices') loadDevices();
+      if (tabId === 'tab-invites') loadInvitations();
+      if (tabId === 'tab-access') loadAccess();
+      if (tabId === 'tab-config') loadConfig();
+    }
+
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    let authToken = localStorage.getItem('rdpulse_web_token') || '';
+    (function bootstrapTokenFromURL() {
+      const params = new URLSearchParams(location.search);
+      const urlToken = (params.get('token') || '').trim();
+      if (!urlToken) {
+        return;
+      }
+      authToken = urlToken;
+      localStorage.setItem('rdpulse_web_token', authToken);
+      params.delete('token');
+      const query = params.toString();
+      history.replaceState({}, '', location.pathname + (query ? '?' + query : '') + location.hash);
+    })();
+
+    function initTokenUI() {
+      const input = document.getElementById('global-token-input');
+      if (input) input.value = authToken;
+    }
+
+    function saveToken(val) {
+      authToken = (val || '').trim();
+      localStorage.setItem('rdpulse_web_token', authToken);
+      initLogStream();
+      loadOverview();
+      loadDevices();
+    }
+
+    async function authFetch(url, options = {}) {
+      options.headers = options.headers || {};
+      if (authToken) {
+        options.headers['Authorization'] = `Bearer ${authToken}`;
+      }
+      const res = await fetch(url, options);
+      if (res.status === 401) {
+        const promptToken = prompt('Web 控制台需要管理员 Token，请输入:');
+        if (promptToken !== null) {
+          saveToken(promptToken);
+          initTokenUI();
+          return authFetch(url, options);
+        }
+      }
+      return res;
+    }
+
+    async function loadOverview() {
+      try {
+        const res = await authFetch('/api/overview');
+        if (!res.ok) return;
+        const data = await res.json();
+        document.getElementById('stat-online').childNodes[0].nodeValue = data.onlineCount + ' ';
+        document.getElementById('stat-registered').innerText = '/ ' + data.registeredCount + ' 已注册';
+        document.getElementById('stat-sessions').innerText = data.activeSessions;
+        document.getElementById('stat-uptime').innerText = data.uptimeSeconds + 's';
+        document.getElementById('stat-portrange').innerText = data.portRangeStart + ' - ' + data.portRangeEnd;
+        document.getElementById('topo-quic').innerText = 'UDP ' + data.quicListen;
+        document.getElementById('topo-rdzv').innerText = 'UDP ' + data.rendezvousListen;
+        document.getElementById('topo-host').innerText = data.publicHost || '未配置';
+        document.getElementById('side-host').innerText = data.publicHost || 'Relay Server';
+        document.getElementById('side-online-badge').innerText = data.onlineCount + ' 在线';
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function loadDevices() {
+      try {
+        const res = await authFetch('/api/devices');
+        if (!res.ok) return;
+        const list = await res.json();
+        const tbody = document.getElementById('devices-tbody');
+        if (!list || list.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-500">暂无已注册设备</td></tr>';
+          return;
+        }
+        tbody.innerHTML = '';
+        list.forEach(dev => {
+          const tr = document.createElement('tr');
+          tr.className = 'hover:bg-[#334155]/30';
+
+          const tdDev = document.createElement('td');
+          tdDev.className = 'p-4 font-mono font-bold text-white flex items-center gap-2';
+          const dot = document.createElement('span');
+          dot.className = `w-2 h-2 rounded-full ${dev.online ? 'bg-emerald-400' : 'bg-slate-600'}`;
+          tdDev.appendChild(dot);
+          tdDev.appendChild(document.createTextNode(dev.deviceId));
+
+          const tdStatus = document.createElement('td');
+          tdStatus.className = 'p-4';
+          const badge = document.createElement('span');
+          badge.className = `px-2 py-0.5 rounded-full text-[11px] ${dev.online ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-400'} font-medium`;
+          badge.textContent = dev.online ? '在线' : '离线';
+          tdStatus.appendChild(badge);
+
+          const tdPort = document.createElement('td');
+          tdPort.className = 'p-4 font-mono text-indigo-300';
+          tdPort.textContent = dev.publicPort;
+
+          const tdRemote = document.createElement('td');
+          tdRemote.className = 'p-4 text-slate-400 font-mono';
+          tdRemote.textContent = dev.remoteAddr || '-';
+
+          const tdEnabled = document.createElement('td');
+          tdEnabled.className = 'p-4';
+          const toggleBtn = document.createElement('button');
+          toggleBtn.className = `text-xs ${dev.enabled ? 'text-emerald-400 hover:text-emerald-300' : 'text-slate-500 hover:text-slate-400'}`;
+          toggleBtn.textContent = dev.enabled ? '已启用 (点击禁用)' : '已禁用 (点击启用)';
+          toggleBtn.onclick = () => toggleDevice(dev.deviceId, !dev.enabled);
+          tdEnabled.appendChild(toggleBtn);
+
+          const tdLastSeen = document.createElement('td');
+          tdLastSeen.className = 'p-4 text-slate-400';
+          tdLastSeen.textContent = dev.lastSeen || '-';
+
+          const tdActions = document.createElement('td');
+          tdActions.className = 'p-4 text-right space-x-2';
+          if (dev.online) {
+            const disBtn = document.createElement('button');
+            disBtn.className = 'text-xs text-amber-400 hover:text-amber-300';
+            disBtn.textContent = '踢下线';
+            disBtn.onclick = () => disconnectDevice(dev.deviceId);
+            tdActions.appendChild(disBtn);
+          }
+          const delBtn = document.createElement('button');
+          delBtn.className = 'text-xs text-rose-400 hover:text-rose-300';
+          delBtn.textContent = '删除';
+          delBtn.onclick = () => deleteDevice(dev.deviceId);
+          tdActions.appendChild(delBtn);
+
+          tr.appendChild(tdDev);
+          tr.appendChild(tdStatus);
+          tr.appendChild(tdPort);
+          tr.appendChild(tdRemote);
+          tr.appendChild(tdEnabled);
+          tr.appendChild(tdLastSeen);
+          tr.appendChild(tdActions);
+          tbody.appendChild(tr);
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function toggleDevice(id, enabled) {
+      const res = await authFetch(`/api/devices/${encodeURIComponent(id)}/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert('操作失败: ' + (err.error || res.statusText));
+      }
+      loadDevices();
+    }
+
+    async function disconnectDevice(id) {
+      const res = await authFetch(`/api/devices/${encodeURIComponent(id)}/disconnect`, { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert('操作失败: ' + (err.error || res.statusText));
+      }
+      loadDevices();
+    }
+
+    async function deleteDevice(id) {
+      if (!confirm(`确认彻底注销并删除设备 ${id} 吗？`)) return;
+      const res = await authFetch(`/api/devices/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert('删除失败: ' + (err.error || res.statusText));
+      }
+      loadDevices();
+    }
+
+    async function loadInvitations() {
+      try {
+        const res = await authFetch('/api/invitations');
+        if (!res.ok) return;
+        const list = await res.json();
+        const tbody = document.getElementById('invitations-tbody');
+        if (!list || list.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-500">暂无待使用邀请</td></tr>';
+          return;
+        }
+        tbody.innerHTML = '';
+        list.forEach(inv => {
+          const tr = document.createElement('tr');
+          tr.className = 'hover:bg-[#334155]/30';
+
+          const tdDev = document.createElement('td');
+          tdDev.className = 'p-4 font-mono font-bold text-white';
+          tdDev.textContent = inv.deviceId;
+
+          const tdHash = document.createElement('td');
+          tdHash.className = 'p-4 font-mono text-slate-400';
+          const hashShort = (inv.tokenHash || '').length >= 16 ? inv.tokenHash.substring(0, 16) + '...' : (inv.tokenHash || '-');
+          tdHash.textContent = hashShort;
+
+          const tdExpires = document.createElement('td');
+          tdExpires.className = 'p-4 text-slate-400';
+          tdExpires.textContent = (inv.expiresAt || '').replace('T', ' ').substring(0, 19);
+
+          const tdStatus = document.createElement('td');
+          tdStatus.className = 'p-4';
+          const badge = document.createElement('span');
+          badge.className = inv.consumedAt ? 'px-2 py-0.5 rounded-full text-[11px] bg-slate-800 text-slate-400' : 'px-2 py-0.5 rounded-full text-[11px] bg-amber-500/10 text-amber-400 border border-amber-500/20';
+          badge.textContent = inv.consumedAt ? '已消费 (设备已入网)' : '待使用 (有效)';
+          tdStatus.appendChild(badge);
+
+          const tdActions = document.createElement('td');
+          tdActions.className = 'p-4 text-right';
+          const delBtn = document.createElement('button');
+          delBtn.className = 'text-xs text-rose-400 hover:text-rose-300';
+          delBtn.textContent = '作废';
+          delBtn.onclick = () => deleteInvitation(inv.deviceId);
+          tdActions.appendChild(delBtn);
+
+          tr.appendChild(tdDev);
+          tr.appendChild(tdHash);
+          tr.appendChild(tdExpires);
+          tr.appendChild(tdStatus);
+          tr.appendChild(tdActions);
+          tbody.appendChild(tr);
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function deleteInvitation(id) {
+      if (!confirm(`作废邀请 ${id}？`)) return;
+      const res = await authFetch(`/api/invitations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert('作废失败: ' + (err.error || res.statusText));
+      }
+      loadInvitations();
+    }
+
+    function openModal() {
+      document.getElementById('invite-modal').classList.remove('hidden');
+      document.getElementById('invite-modal').classList.add('flex');
+      document.getElementById('modal-result').classList.add('hidden');
+      document.getElementById('modal-submit-btn').classList.remove('hidden');
+    }
+
+    function closeModal() {
+      document.getElementById('invite-modal').classList.add('hidden');
+      document.getElementById('invite-modal').classList.remove('flex');
+    }
+
+    async function submitCreateInvite() {
+      const deviceId = document.getElementById('modal-device-id').value.trim();
+      const expiresInDays = parseInt(document.getElementById('modal-expires').value) || 30;
+      if (!deviceId) {
+        alert('请输入设备 ID');
+        return;
+      }
+      try {
+        const res = await authFetch('/api/invitations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deviceId, expiresInDays })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert('生成失败: ' + (err.error || res.statusText));
+          return;
+        }
+        const data = await res.json();
+        document.getElementById('modal-token-val').value = data.token;
+        document.getElementById('modal-yaml-val').value = data.yamlConfig;
+        document.getElementById('modal-result').classList.remove('hidden');
+        document.getElementById('modal-submit-btn').classList.add('hidden');
+      } catch (e) {
+        alert('生成失败: ' + e);
+      }
+    }
+
+    async function loadAccess() {
+      try {
+        const res = await authFetch('/api/access');
+        if (!res.ok) return;
+        const data = await res.json();
+        document.getElementById('access-allow-all').checked = !!data.allowAll;
+        document.getElementById('access-map-json').value = JSON.stringify(data.accessMap || {}, null, 2);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function saveAccessPolicy() {
+      try {
+        const allowAll = document.getElementById('access-allow-all').checked;
+        const accessMap = JSON.parse(document.getElementById('access-map-json').value || '{}');
+        const res = await authFetch('/api/access', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ allowAll, accessMap })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert('保存失败: ' + (err.error || res.statusText));
+          return;
+        }
+        alert('授权策略已成功更新并即刻热生效，且已同步持久化保存至服务端配置文件 (relay.yaml)！');
+      } catch (e) {
+        alert('保存失败 (请确认 JSON 格式合法): ' + e);
+      }
+    }
+
+    async function loadConfig() {
+      try {
+        const res = await authFetch('/api/config');
+        if (!res.ok) return;
+        const data = await res.json();
+        document.getElementById('cfg-public-host').value = data.publicHost || '';
+        document.getElementById('cfg-default-policy').value = data.defaultPolicy || 'deny';
+        document.getElementById('cfg-port-start').value = data.portRangeStart || 3389;
+        document.getElementById('cfg-port-end').value = data.portRangeEnd || 3389;
+        document.getElementById('cfg-web-token').value = data.webToken || '';
+        document.getElementById('cfg-raw-yaml').value = data.rawYaml || '';
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function saveConfigBasic() {
+      const publicHost = document.getElementById('cfg-public-host').value.trim();
+      const defaultPolicy = document.getElementById('cfg-default-policy').value;
+      const portRangeStart = parseInt(document.getElementById('cfg-port-start').value);
+      const portRangeEnd = parseInt(document.getElementById('cfg-port-end').value);
+      const webToken = document.getElementById('cfg-web-token').value;
+
+      if (!publicHost) {
+        alert('公网主机名 / IP 不能为空');
+        return;
+      }
+      if (isNaN(portRangeStart) || isNaN(portRangeEnd) || portRangeStart <= 0 || portRangeEnd < portRangeStart || portRangeEnd > 65535) {
+        alert('端口池范围不合法 (范围需在 1 ~ 65535 之间，且终止端口不小于起始端口)');
+        return;
+      }
+
+      try {
+        const payload = {
+          publicHost,
+          defaultPolicy,
+          portRangeStart,
+          portRangeEnd
+        };
+        if (webToken) {
+          payload.webToken = webToken;
+        }
+        const res = await authFetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert('保存配置失败: ' + (err.error || res.statusText));
+          return;
+        }
+        if (webToken && webToken !== authToken) {
+          saveToken(webToken);
+          initTokenUI();
+        }
+        alert('核心配置已成功更新，并已同步持久化写入 relay.yaml（保留原有注释）！');
+        loadConfig();
+      } catch (e) {
+        alert('保存失败: ' + e);
+      }
+    }
+
+    async function saveConfigYaml() {
+      const rawYaml = document.getElementById('cfg-raw-yaml').value;
+      if (!rawYaml.trim()) {
+        alert('YAML 配置内容不能为空');
+        return;
+      }
+      if (!confirm('确认保存并应用全量 YAML 配置吗？系统将校验语法并同步回写到 configs/relay.yaml。')) return;
+
+      try {
+        const res = await authFetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rawYaml })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert('YAML 校验/保存失败: ' + (err.error || res.statusText));
+          return;
+        }
+        alert('全量 YAML 配置校验通过，已成功同步保存至服务端配置文件！');
+        loadConfig();
+      } catch (e) {
+        alert('保存失败: ' + e);
+      }
+    }
+
+    // SSE Log streaming
+    let currentEventSource = null;
+
+    async function initLogStream() {
+      if (currentEventSource) {
+        currentEventSource.close();
+        currentEventSource = null;
+      }
+      const box = document.getElementById('relay-logs-box');
+      if (authToken) {
+        try { await authFetch('/api/overview'); } catch (e) {}
+      }
+      currentEventSource = new EventSource('/api/logs');
+      currentEventSource.onmessage = function(e) {
+        try {
+          const entry = JSON.parse(e.data);
+          const line = document.createElement('div');
+          line.className = 'text-slate-300';
+          line.textContent = `[${entry.timestamp}] ${entry.message}`;
+          box.appendChild(line);
+          while (box.childNodes.length > 300) {
+            box.removeChild(box.firstChild);
+          }
+          box.scrollTop = box.scrollHeight;
+        } catch (err) {}
+      };
+      currentEventSource.onerror = function() {
+        // SSE reconnects automatically
+      };
+    }
+
+    function clearLogs() {
+      document.getElementById('relay-logs-box').innerHTML = '';
+    }
+
+    // 自动轮询与初始化
+    initTokenUI();
+    loadOverview();
+    initLogStream();
+    setInterval(loadOverview, 5000);
+  </script>
+</body>
+</html>

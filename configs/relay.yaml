@@ -1,0 +1,66 @@
+server:
+  quic:
+    listen: ":443"
+    certFile: "/etc/rdp-relay/tls/fullchain.pem"
+    keyFile: "/etc/rdp-relay/tls/privkey.pem"
+    # 生产必须同时配置 certFile/keyFile；缺证书时默认拒绝启动。
+    # 只有显式设置 true 才允许在开发环境临时生成自签证书。
+    allowEphemeralCertificate: false
+  tls:
+    # 独立的 TLS/TCP fallback；TCP 与 QUIC/UDP 可共用端口 443。
+    listen: ":443"
+    disabled: false # true 表示关闭 TLS/TCP fallback
+  rendezvous:
+    listen: ":21116" # UDP Rendezvous / NAT 反射服务
+
+rdp:
+  # 必填：客户端用于访问该 Relay 的公网主机名或 IP。
+  publicHost: "rdp.example.com"
+  portRange:
+    # 每个被控端绑定一个稳定公网端口，范围含首尾；重启后保持不变。
+    start: 3389
+    end: 3389
+
+udp:
+  datagramPayload: 1150     # RDP UDP 单分片负载字节数，建议不超过 1200
+  sessionIdleTimeout: 60s   # 空闲 UDP 会话超时
+  reassemblyTimeout: 100ms  # 分片重组等待时间，超时丢弃整帧
+  maxSessionsPerAgent: 256  # 单个被控端 UDP 会话上限
+  maxSessionsPerIP: 32      # 同一客户端源 IP 会话上限
+  maxSessionCreateRate: 50  # 每秒允许新建会话数
+
+security:
+  # 兼容模式访问控制："deny"（默认拒绝）或 "allow"（默认放行）。
+  defaultPolicy: deny
+  allow: [] # 显式放行的 CIDR/单 IP 列表
+  # 每台设备只允许一条未过期邀请，首次注册时被原子消费一次。
+  # 需要重新开放时，通过替换 token/expiresAt 显式轮换。
+  enrollmentInvitations: []
+  # - deviceID: "PC-TARGET-B"
+  #   token: "GENERATE_A_UNIQUE_RANDOM_VALUE_OF_AT_LEAST_32_BYTES"
+  #   expiresAt: "2030-01-01T00:00:00Z"
+  allowAllControllerTargets: false # true 后所有 Controller 可访问任意 Target
+  # 键为 Target 设备 ID，值为允许访问的 Controller ID 列表。
+  # 键或值中的 "*" 表示任意 Target/任意 Controller，仅应在明确需要时使用。
+  controllerAccess: {}
+  limits:
+    maxConnectionsPerIP: 16        # 同一源 IP 并发控制通道数
+    maxConnectionRatePerMinute: 60 # 同一源 IP 每分钟新建控制通道上限
+    maxEnrollmentRatePerMinute: 5  # 同一源 IP 每分钟邀请注册尝试上限
+    maxPublicTCPPerIP: 32          # 同一源 IP 并发公网 TCP 连接上限
+    maxPublicTCPRatePerSecond: 20  # 同一源 IP 每秒新建公网 TCP 连接上限
+
+storage:
+  type: sqlite # 目前仅支持 sqlite
+  path: "/var/lib/rdp-relay/relay.db"
+
+metrics:
+  listen: "127.0.0.1:9090" # Prometheus /metrics 与 pprof 监听地址
+
+web:
+  listen: "127.0.0.1:8080" # 默认只绑本机；公网暴露必须自行改地址并设置 token
+  disabled: false          # 是否禁用 Web 管理控制台
+  token: ""                # 管理员 Token。留空时启动进程会自动生成；生成失败则拒绝启动控制台
+
+log:
+  level: info # 已定义字段；当前版本日志框架尚未按此过滤

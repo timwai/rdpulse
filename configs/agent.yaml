@@ -1,0 +1,39 @@
+server:
+  # 必填：被 Relay TLS 证书覆盖的主机名:端口，QUIC 使用 UDP。
+  address: "relay.example.com:443"
+  # 通常与 address 相同；TLS/TCP fallback 使用 TCP 而 QUIC 使用 UDP。
+  tlsAddress: "relay.example.com:443"
+  caCert: "" # Relay 私有 CA/自签证书 PEM 路径；留空使用系统信任库
+  disableTLSFallback: false # true 时 QUIC 失败后不再尝试 TLS/TCP
+  disableQUIC: false        # true 时跳过 QUIC，直接尝试 TLS/TCP fallback
+  quicDialTimeout: 4s       # 单次 QUIC 拨号超时
+  rendezvousAddress: "relay.example.com:21116" # NAT 反射候选探测地址
+  insecureSkipVerify: false # 仅开发调试使用，生产必须为 false
+
+device:
+  id: "office-pc"
+  # 每台设备独立生成至少 32 字节的随机密钥。
+  secret: ""
+  # 仅首次注册需要；注册成功后请清空并重启。
+  enrollmentToken: ""
+
+rdp:
+  address: "127.0.0.1:3389" # 被控端本机 RDP 地址
+
+transport:
+  datagramPayload: 1150 # RDP UDP 单分片负载，应与 Relay 一致
+  disableP2P: false     # true 时本端不发起/接受 P2P，强制走 Relay
+
+udp:
+  sessionIdleTimeout: 60s  # 空闲 UDP 会话超时
+  reassemblyTimeout: 100ms # 分片重组等待时间
+
+heartbeat:
+  interval: 10s # Relay 保活心跳周期
+
+reconnect:
+  maxInterval: 30s # 断线重连最大退避间隔，从 1s 起指数退避
+
+log:
+  level: info       # 已定义字段；当前版本日志框架尚未按此过滤
+  path: "agent.log" # 已定义字段；当前版本未启用文件输出

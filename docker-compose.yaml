@@ -1,0 +1,13 @@
+services:
+  rdp-relay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rdpulse-relay:latest
+    container_name: rdpulse-relay
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./configs/relay.yaml:/etc/rdp-relay/config.yaml:ro
+      - ./tls:/etc/rdp-relay/tls:ro
+      - ./data:/var/lib/rdp-relay

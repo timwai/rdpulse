@@ -1,0 +1,28 @@
+# Binaries
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Data & Database
+data/
+*.db
+*.db-wal
+*.db-shm
+test_relay.db*
+
+# Logs
+*.log
+agent.log
+relay.log
+
+# Certificates & Keys
+certs/
+*.crt
+*.key
+*.pem
+
+# Go build cache & OS
+.DS_Store
+Thumbs.db
